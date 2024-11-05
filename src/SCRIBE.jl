@@ -5,13 +5,10 @@ using LinearAlgebra
 using GaussianDistributions: ⊕, Gaussian
 import Kalman
 
-abstract type SCRIBEModel end
-export SCRIBEModel
-
-include("LinearGaussianScalarFieldModels.jl")
+include("SCRIBEModels.jl")
 include("CovarianceIntersection.jl")
 
-@reexport using .LinearGaussianScalarFieldModels
+@reexport using .SCRIBEModels
 
 # Write your package code here.
 
