@@ -5,22 +5,33 @@ struct LGSFModelParameters <: SCRIBEModelParameters
     nᵩ::Integer # Defines number of model features (size of the model)
     p::Dict{Symbol, Any} # Dict of underlying parameter factors
     ψ_p::Vector{Dict{Symbol, Any}} # Consolidated vector of ψ defining parameters
+    ϕ₀::Vector{Float64} # Initial ϕ of the system.
     A::Matrix{Float64} # Linear dynamics matrix driving ϕ
     w::Dict{Symbol, Any} # Definition of stochastic (noise) process driving ϕ - stored in dict
 
-    function LGSFModelParameters(μ::VecOrMat{Float64}=hcat(range(-1,1,5), zeros(5)),
-                                 σ::Vector{Float64}=[1.],
-                                 τ::Vector{Float64}=[1.],
-                                 Q::Union{Nothing, Matrix{Float64}}=nothing,
-                                 A::Union{Nothing, Matrix{Float64}}=nothing)
+    function LGSFModelParameters(μ::VecOrMat{Float64}, σ::Vector{Float64}, τ::Vector{Float64},
+                                 ϕ₀::Union{Nothing, Vector{Float64}}, A::Union{Nothing, Matrix{Float64}},
+                                 Q::Union{Nothing, Matrix{Float64}})
         let ψ_p=[Dict([(:μ, m),(:σ, s),(:τ, t)]) for m in collect(eachrow(μ)) for s in σ for t in τ], nᵩ=size(ψ_p,1)
             p=Dict(:μ=>μ, :σ=>σ, :τ=>τ)
+            if ϕ₀===nothing; ϕ₀=zeros(nᵩ); end
             if A===nothing; A=I(nᵩ); end
             if Q===nothing; Q=I(nᵩ); end
             w=Dict(:Q=>Q, :w_dist=>Gaussian(zeros(nᵩ), Q))
-            new(nᵩ, p, ψ_p, A, w)
+            new(nᵩ, p, ψ_p, ϕ₀, A, w)
         end
     end
+end
+
+"""Keyword-named constructor for LGSFModelParameters
+"""
+function LGSFModelParameters(;μ::VecOrMat{Float64}=hcat(range(-1,1,5), zeros(5)),
+                              σ::Vector{Float64}=[1.],
+                              τ::Vector{Float64}=[1.],
+                              ϕ₀::Union{Nothing, Vector{Float64}}=nothing,
+                              A::Union{Nothing, Matrix{Float64}}=nothing,
+                              Q::Union{Nothing, Matrix{Float64}}=nothing)
+    LGSFModelParameters(μ,σ,τ,ϕ₀,A,Q)
 end
 
 """Linear Gaussian Scalar Fields Model type.
@@ -41,7 +52,7 @@ Fields:\\
 
     This is not intended to be used by the end-user, and should only be called within other exposed methods.
 
-    Requires: `k`, `params`, `ψ`, and `ϕ`. The specific w(k) (`w_k`) will be sampled from the `w_dist` parameter.
+    Requires: `k`, `params`, `ψ`, `ϕ`, `w_k`.
 """
 struct LGSFModel <: SCRIBEModel
     k::Integer # Timestep associated with model
@@ -50,8 +61,8 @@ struct LGSFModel <: SCRIBEModel
     ϕ::Vector{Float64} # Coefficient vector
     w_k::Vector{Float64} # Current noise vector of the modeled process
 
-    function LGSFModel(k::Integer, params::LGSFModelParameters, ψ::Function, ϕ::Vector{Float64})
-        new(k, params, ψ, ϕ, rand(params.w[:w_dist]))
+    function LGSFModel(k::Integer, params::LGSFModelParameters, ψ::Function, ϕ::Vector{Float64}, w_k::Vector{Float64})
+        new(k, params, ψ, ϕ, w_k)
     end
 end
 
@@ -73,8 +84,8 @@ end
 
 """Create the initial LGSFModel based on parameters.
 
-This is for storing model estimates. The ϕ coefficient vector starts at \bm{0}.
-Initializing implies that we start at discrete k=0.
+The value of ϕ₀ is drawn from the parameter list.
+Initializing implies that we start at discrete k=1.
 
 Input:
     params::LGSFModelParameters
@@ -82,21 +93,7 @@ Output:
     model::LGSFModel
 """
 function initialize_SCRIBEModel_from_parameters(params::LGSFModelParameters)
-    return LGSFModel(0, params, x->ψ_from_params(x, params), zeros(params.nᵩ))
-end
-
-"""Directly specify an initial LGSFModel based on parameters.
-
-This is for a ground-truth model. This requires a ϕ₀ to be specified.
-Initializing implies that we start at discrete k=0.
-
-Input:
-    params::LGSFModelParameters
-Output:
-    model::LGSFModel
-"""
-function initialize_SCRIBEModel_from_parameters(params::LGSFModelParameters, ϕ₀::Vector{Float64})
-    return LGSFModel(0, params, x->ψ_from_params(x, params), ϕ₀)
+    return LGSFModel(1, params, x->ψ_from_params(x, params), params.ϕ₀, rand(params.w[:w_dist]))
 end
 
 """Computes the stochastic evolution of ϕ for a given timestep of an LGSFModel.
@@ -139,11 +136,12 @@ end
 
 """Stores information about the current observations.
 
-The following fields define the information stored:
-`k::Integer`: Discrete timestep associated with observations
-`nₛ::Integer`: Number of samples gathered in this time step
-`X::VecOrMat{Float64}`: Matrix of observation locations (Vector if single observation)
-`H::Matrix{Float64}`: Observation matrix representing taking samples at X
+The following fields define the information stored:\\
+`k::Integer`: Discrete timestep associated with observations \\
+`nₛ::Integer`: Number of samples gathered in this time step \\
+`X::VecOrMat{Float64}`: Matrix of observation locations (Vector if single observation) \\
+\t* Matrix stores the locations vertically, such that each new row represents a new location\\
+`H::Matrix{Float64}`: Observation matrix representing taking samples at X \\
 `v::Dict{Symbol, AbstractArray{Float64}}`: Dictionary of underlying sample noise factors
 `z::Vector{Float64}`: Observations gathered at time step k
 
