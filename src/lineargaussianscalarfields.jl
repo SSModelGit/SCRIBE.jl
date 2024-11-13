@@ -55,10 +55,26 @@ struct LGSFModel <: SCRIBEModel
     end
 end
 
+"""Defines how ψ(x) is calculated, based on passed parameters.
+    
+Use this to fill the LGSFModel field:
+    ψ=x->ψ_from_params(x, params)
+"""
+function ψ_from_params(x::Union{Vector{Float64}, Float64}, params::LGSFModelParameters)
+    p=zeros(params.nᵩ)
+    for (i,k) in enumerate(params.ψ_p)
+        p[i] = (1/k[:τ]) * exp(-(norm(x-k[:μ])^2) / k[:σ])
+    end
+    # for i in 1:params.nᵩ
+    #     p[i] = (1/params.τ[i]) * exp(-(norm(x-params.μ[i])^2) / params.σ[i])
+    # end
+    return p
+end
+
 """Create the initial LGSFModel based on parameters.
 
+This is for storing model estimates. The ϕ coefficient vector starts at \bm{0}.
 Initializing implies that we start at discrete k=0.
-The ϕ coefficient vector starts at \bm{0}.
 
 Input:
     params::LGSFModelParameters
@@ -66,22 +82,21 @@ Output:
     model::LGSFModel
 """
 function initialize_SCRIBEModel_from_parameters(params::LGSFModelParameters)
-    """Defines how ψ(x) is calculated, based on passed parameters.
-    
-    Use this to fill the LGSFModel field:
-        ψ=x->ψ_from_params(x, params)
-    """
-    function ψ_from_params(x::Union{Vector{Float64}, Float64}, params::LGSFModelParameters)
-        p=zeros(params.nᵩ)
-        for (i,k) in enumerate(params.ψ_p)
-            p[i] = (1/k[:τ]) * exp(-(norm(x-k[:μ])^2) / k[:σ])
-        end
-        # for i in 1:params.nᵩ
-        #     p[i] = (1/params.τ[i]) * exp(-(norm(x-params.μ[i])^2) / params.σ[i])
-        # end
-        return p
-    end
     return LGSFModel(0, params, x->ψ_from_params(x, params), zeros(params.nᵩ))
+end
+
+"""Directly specify an initial LGSFModel based on parameters.
+
+This is for a ground-truth model. This requires a ϕ₀ to be specified.
+Initializing implies that we start at discrete k=0.
+
+Input:
+    params::LGSFModelParameters
+Output:
+    model::LGSFModel
+"""
+function initialize_SCRIBEModel_from_parameters(params::LGSFModelParameters, ϕ₀::Vector{Float64})
+    return LGSFModel(0, params, x->ψ_from_params(x, params), ϕ₀)
 end
 
 """Computes the stochastic evolution of ϕ for a given timestep of an LGSFModel.
@@ -92,6 +107,7 @@ LGSF_ϕ_dynamics(smodel::LGSFModel) = muladd(smodel.params.A, smodel.ϕ, smodel.
 
 """Progresses the discrete-time model through one time step.
 
+This is for a ground-truth model.
 This requires an explicit calculation of any involved discrete dynamics.
 
 In the LGSF model, the only dynamic object is ϕ.
@@ -99,6 +115,12 @@ We use the simple linear stochastic update.
 This is computed via an internal method (not exported) named `LGSF_ϕ_dynamics`.
 """
 update_SCRIBEModel(smodel::LGSFModel) = LGSFModel(smodel.k+1, smodel.params, smodel.ψ, LGSF_ϕ_dynamics(smodel))
+
+"""Progresses the discrete-time model through one time step.
+
+This is for model estimates. This requires explicit ϕ declarations.
+"""
+update_SCRIBEModel(smodel::LGSFModel, ϕₖ) = LGSFModel(smodel.k+1, smodel.params, smodel.ψ, ϕₖ)
 
 function predict_SCRIBEModel(smodel::LGSFModel, x::Union{Vector{Float64}, Float64}, k::Integer)
     @assert k==smodel.k "Timestep of prediction does not match the model timestep"
@@ -135,12 +157,18 @@ struct LGSFObserverState <: SCRIBEObserverState
     v::Dict{Symbol, AbstractArray{Float64}}
     z::Vector{Float64}
 
-    function LGSFObserverState(X::VecOrMat{Float64}, lmodel::LGSFModel, o_b::LGSFObserverBehavior)
-        let nₛ=size(X,1), v_s=o_b.v_s, R=v_s[:σ]*I(nₛ)
-            v=Dict(:R=>R, :k=>rand(Gaussian(zeros(nₛ), R)))
-            H=mapslices(lmodel.ψ,X,dims=2)
-            z=muladd(H,lmodel.ϕ,v[:k])
-            new(lmodel.k, nₛ, X, H, v, z)
-        end
+    function LGSFObserverState(k::Integer, nₛ::Integer, X::VecOrMat{Float64},
+                               H::Matrix{Float64}, v::Dict{Symbol, AbstractArray{Float64}},
+                               z::Vector{Float64})
+        new(k,nₛ,X,H,v,z)
+    end
+end
+
+function scribe_observations(X::VecOrMat{Float64}, lmodel::LGSFModel, o_b::LGSFObserverBehavior)
+    let nₛ=size(X,1), v_s=o_b.v_s, R=v_s[:σ]*I(nₛ)
+        v=Dict(:R=>R, :k=>rand(Gaussian(zeros(nₛ), R)))
+        H=mapslices(lmodel.ψ,X,dims=2)
+        z=muladd(H,lmodel.ϕ,v[:k])
+        LGSFObserverState(lmodel.k, nₛ, X, H, v, z)
     end
 end

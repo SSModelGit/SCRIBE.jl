@@ -1,7 +1,7 @@
 module SCRIBEModels
 
 export SCRIBEModel, SCRIBEModelParameters, initialize_SCRIBEModel_from_parameters, update_SCRIBEModel, predict_SCRIBEModel
-export SCRIBEObserverBehavior, SCRIBEObserverState
+export SCRIBEObserverBehavior, SCRIBEObserverState, scribe_observations
 
 using GaussianDistributions: Gaussian
 using LinearAlgebra: norm, I, ⋅
