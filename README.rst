@@ -1,3 +1,3 @@
-# SCRIBE
+SCRIBE
 
-[![Build Status](https://github.com/SSModelGit/SCRIBE.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/SSModelGit/SCRIBE.jl/actions/workflows/CI.yml?query=branch%3Amain)
+SCRIBE, or Signal-aware Collaboration for Reliable Information-Based Estimation, is a.
