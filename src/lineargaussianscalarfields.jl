@@ -14,7 +14,11 @@ struct LGSFModelParameters <: SCRIBEModelParameters
                                  Q::Union{Nothing, Matrix{Float64}})
         let ψ_p=[Dict([(:μ, m),(:σ, s),(:τ, t)]) for m in collect(eachrow(μ)) for s in σ for t in τ], nᵩ=size(ψ_p,1)
             p=Dict(:μ=>μ, :σ=>σ, :τ=>τ)
-            if ϕ₀===nothing; ϕ₀=zeros(nᵩ); end
+            if ϕ₀===nothing
+                ϕ₀=zeros(nᵩ)
+            else
+                @assert size(ϕ₀,1)==nᵩ
+            end
             if A===nothing; A=I(nᵩ); end
             if Q===nothing; Q=I(nᵩ); end
             w=Dict(:Q=>Q, :w_dist=>Gaussian(zeros(nᵩ), Q))
@@ -111,13 +115,15 @@ In the LGSF model, the only dynamic object is ϕ.
 We use the simple linear stochastic update.
 This is computed via an internal method (not exported) named `LGSF_ϕ_dynamics`.
 """
-update_SCRIBEModel(smodel::LGSFModel) = LGSFModel(smodel.k+1, smodel.params, smodel.ψ, LGSF_ϕ_dynamics(smodel))
+update_SCRIBEModel(smodel::LGSFModel) = LGSFModel(smodel.k+1, smodel.params, smodel.ψ,
+                                                  LGSF_ϕ_dynamics(smodel), rand(smodel.params.w[:w_dist]))
 
 """Progresses the discrete-time model through one time step.
 
 This is for model estimates. This requires explicit ϕ declarations.
 """
-update_SCRIBEModel(smodel::LGSFModel, ϕₖ) = LGSFModel(smodel.k+1, smodel.params, smodel.ψ, ϕₖ)
+update_SCRIBEModel(smodel::LGSFModel, ϕₖ) = LGSFModel(smodel.k+1, smodel.params, smodel.ψ,
+                                                      ϕₖ, rand(smodel.params.w[:w_dist]))
 
 function predict_SCRIBEModel(smodel::LGSFModel, x::Union{Vector{Float64}, Float64}, k::Integer)
     @assert k==smodel.k "Timestep of prediction does not match the model timestep"
