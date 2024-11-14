@@ -92,8 +92,8 @@ Input:
 Output:
     model::LGSFModel
 """
-function initialize_SCRIBEModel_from_parameters(params::LGSFModelParameters)
-    return LGSFModel(1, params, x->ψ_from_params(x, params), params.ϕ₀, rand(params.w[:w_dist]))
+function initialize_SCRIBEModel_from_parameters(params::LGSFModelParameters; k=1)
+    return LGSFModel(k, params, x->ψ_from_params(x, params), params.ϕ₀, rand(params.w[:w_dist]))
 end
 
 """Computes the stochastic evolution of ϕ for a given timestep of an LGSFModel.
@@ -139,7 +139,7 @@ end
 The following fields define the information stored:\\
 `k::Integer`: Discrete timestep associated with observations \\
 `nₛ::Integer`: Number of samples gathered in this time step \\
-`X::VecOrMat{Float64}`: Matrix of observation locations (Vector if single observation) \\
+`X::Matrix{Float64}`: Matrix of observation locations (Vector if single observation) \\
 \t* Matrix stores the locations vertically, such that each new row represents a new location\\
 `H::Matrix{Float64}`: Observation matrix representing taking samples at X \\
 `v::Dict{Symbol, AbstractArray{Float64}}`: Dictionary of underlying sample noise factors
@@ -150,23 +150,29 @@ Constructor input: List of locations `X`, current system state `lmodel`, observe
 struct LGSFObserverState <: SCRIBEObserverState
     k::Integer
     nₛ::Integer
-    X::VecOrMat{Float64}
+    X::Matrix{Float64}
     H::Matrix{Float64}
     v::Dict{Symbol, AbstractArray{Float64}}
     z::Vector{Float64}
 
-    function LGSFObserverState(k::Integer, nₛ::Integer, X::VecOrMat{Float64},
+    function LGSFObserverState(k::Integer, nₛ::Integer, X::Matrix{Float64},
                                H::Matrix{Float64}, v::Dict{Symbol, AbstractArray{Float64}},
                                z::Vector{Float64})
         new(k,nₛ,X,H,v,z)
     end
 end
 
-function scribe_observations(X::VecOrMat{Float64}, lmodel::LGSFModel, o_b::LGSFObserverBehavior)
+"""Compute the observation dynamics matrix.
+
+This is also referred to as the **H matrix**.
+"""
+compute_obs_dynamics(smodel::LGSFModel, X::Matrix{Float64}) = mapslices(smodel.ψ,X,dims=2)
+
+function scribe_observations(X::Matrix{Float64}, smodel::LGSFModel, o_b::LGSFObserverBehavior)
     let nₛ=size(X,1), v_s=o_b.v_s, R=v_s[:σ]*I(nₛ)
         v=Dict(:R=>R, :k=>rand(Gaussian(zeros(nₛ), R)))
-        H=mapslices(lmodel.ψ,X,dims=2)
-        z=muladd(H,lmodel.ϕ,v[:k])
-        LGSFObserverState(lmodel.k, nₛ, X, H, v, z)
+        H=compute_obs_dynamics(smodel, X)
+        z=muladd(H,smodel.ϕ,v[:k])
+        LGSFObserverState(smodel.k, nₛ, X, H, v, z)
     end
 end
