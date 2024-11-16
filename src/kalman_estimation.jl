@@ -1,8 +1,9 @@
 using Parameters: @unpack
 using Combinatorics: combinations
 
-export AgentEnvModel, initialize_agent, next_agent_state
-export SystemEstimators, simple_LGSF_Estimators
+export AgentEnvModel, initialize_agent, next_agent_state, next_agent_time, next_agent_info_state
+export SystemEstimators, simple_LGSF_Estimators, compute_info_priors, compute_innov_from_obs
+export centralized_fusion
 
 """Current discrete-time estimate of the linear system being observed.
 
@@ -88,6 +89,16 @@ function initialize_agent(params::SCRIBEModelParameters, bhv::SCRIBEObserverBeha
     AgentEnvModel(1, cwrld.k-1, params, bhv, [init_agent_estimate(cwrld, 1, params, bhv, X₀)], [init_agent_info(params.nᵩ)])
 end
 
+"""Adds new internal system estimate for t=k+1.
+"""
+function next_agent_state(agent::AgentEnvModel, ϕₖ::Vector{Float64}, cwrld::SCRIBEModel, X::Matrix{Float64})
+    push!(agent.estimates, new_agent_estimate(cwrld, agent.k+1, agent.estimates[agent.k].estimate, ϕₖ, agent.bhv, X))
+end
+
+next_agent_time(agent::AgentEnvModel) = agent.k+=1
+
+next_agent_info_state(agent::AgentEnvModel, info::AgentEnvInfo) = push!(agent.information, info)
+
 struct SystemEstimators
     system::AgentEnvModel
     A::Function
@@ -119,10 +130,6 @@ function simple_LGSF_Estimators(system::AgentEnvModel)
                      kY->get_Y(kY, system), ky->get_y(ky, system))
 end
 
-function next_agent_state(agent::AgentEnvModel, ϕₖ::Vector{Float64}, cwrld::SCRIBEModel, X::Matrix{Float64})
-    push!(agent.estimates, new_agent_estimate(cwrld, agent.k+1, agent.estimates[agent.k].estimate, ϕₖ, agent.bhv, X))
-end
-
 """Computes the prior update **of the next step** Y⁻(k+1).
 
 Takes two inputs:
@@ -152,11 +159,12 @@ function compute_innov_from_obs(Ef::SystemEstimators, k::Integer)
 end
 
 function centralized_fusion(agent_estimators::Vector{SystemEstimators}, k::Integer)
+    nₐ=size(priors,1)
     # Compute priors from current system state at t=k and previous information state at t=k-1
     priors = map(ef->compute_info_priors(ef, k), agent_estimators)
 
     # Ensure all priors are the same
-    if size(priors,1)>1
+    if nₐ>1
         for prior_pair in combinations(priors, 2)
             let prior_a=prior_pair[1], prior_b=prior_pair[2]
                 @assert isapprox(prior_a[1], prior_b[1]) "Information matrix priors for Y⁻(k+1) are diverged!"
@@ -165,8 +173,10 @@ function centralized_fusion(agent_estimators::Vector{SystemEstimators}, k::Integ
         end
     end
 
-
     # Compute innovations for t=k+1 from current observation at t=k
     innovs = map(ef->compute_innov_from_obs(ef, k), agent_estimators)
-    avg_innov = average(innovs)
+    δĪ=mean(map(x->x[1], innovs))
+    δī=mean(map(x->x[2], innovs))
+
+    return [AgentEnvInfo(priors[a][2]+nₐ*δī, priors[a][1]+nₐ*δĪ, δī, δĪ) for a in 1:nₐ]
 end

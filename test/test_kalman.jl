@@ -49,22 +49,34 @@ function test_estimators(; testing=true)
         @test_throws BoundsError lg_Fs.z(2)
     end
 
-    for i in 1:4
-        push!(gt_model, update_SCRIBEModel(gt_model[i]))
-        push!(sample_locations, rand(2,2))
-        next_agent_state(ag,zeros(ag_params.nᵩ), gt_model[i+1], sample_locations[i+1])
-    end
-    
-    if testing
-        @test_throws BoundsError lg_Fs.ϕ(6)
-        @test_throws BoundsError lg_Fs.A(6)
-        @test_throws BoundsError lg_Fs.H(6)
-        @test_throws BoundsError lg_Fs.z(6)
+    # Add temporary lexical scoping for stupid testing
+    let gt_model=deepcopy(gt_model), sample_locations=deepcopy(sample_locations), ag=deepcopy(ag)
 
-        @test all([isapprox(lg_Fs.ϕ(i), zeros(5)) for i in 1:5])
-        @test !all([size(lg_Fs.H(i))==(2,5) for i in 1:5])
-        @test all([size(lg_Fs.H(i))==(2,5) for i in 2:5])
-        @test all([size(lg_Fs.z(i))==(2,) for i in 2:5])
+        for i in 1:4
+            push!(gt_model, update_SCRIBEModel(gt_model[i]))
+            push!(sample_locations, rand(2,2))
+            next_agent_state(ag,zeros(ag_params.nᵩ), gt_model[i+1], sample_locations[i+1])
+        end
+        
+        if testing
+            @test_throws BoundsError lg_Fs.ϕ(6)
+            @test_throws BoundsError lg_Fs.A(6)
+            @test_throws BoundsError lg_Fs.H(6)
+            @test_throws BoundsError lg_Fs.z(6)
+
+            @test all([isapprox(lg_Fs.ϕ(i), zeros(5)) for i in 1:5])
+            @test !all([size(lg_Fs.H(i))==(2,5) for i in 1:5])
+            @test all([size(lg_Fs.H(i))==(2,5) for i in 2:5])
+            @test all([size(lg_Fs.z(i))==(2,) for i in 2:5])
+        end
+    end
+
+    for i in 1:100
+        push!(gt_model, update_SCRIBEModel(gt_model[i]))
+        push!(sample_locations, 3*rand(5,2))
+        next_agent_state(ag,zeros(ag_params.nᵩ), gt_model[i+1], sample_locations[i+1])
+        next_agent_time(ag)
+        next_agent_info_state(ag, centralized_fusion([ag], ag.k)[1])
     end
 
     return ag, lg_Fs
