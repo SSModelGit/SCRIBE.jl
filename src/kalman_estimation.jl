@@ -1,5 +1,6 @@
-using Parameters: @unpack
 using Combinatorics: combinations
+using Parameters: @unpack
+using Statistics: mean
 
 export AgentEnvModel, initialize_agent, next_agent_state, next_agent_time, next_agent_info_state
 export SystemEstimators, simple_LGSF_Estimators, compute_info_priors, compute_innov_from_obs
@@ -169,7 +170,8 @@ Takes two inputs:
 * The **current** timestep `k`. It will use this along `Ef` to lookup corresponding system information.
 """
 function compute_info_priors(Ef::SystemEstimators, k::Integer)
-    @unpack _, A, _, Q, H, _, _, Y, y = Ef
+    # @unpack _, A, _, Q, H, _, _, Y, y = Ef
+    @unpack A, Q, H, Y, y = Ef
     M  = inv(A(k))' * Y(k) * inv(A(k))
     Y⁻ = M - M * inv(M + inv(Q(k))) * M
     y⁻ = Y⁻ * A(k) * Y(k) * y(k)
@@ -183,7 +185,7 @@ Takes two inputs:
 * The **current** timestep `k`. It will use this along `Ef` to lookup corresponding system information.
 """
 function compute_innov_from_obs(Ef::SystemEstimators, k::Integer)
-    @unpack _, _, _, _, H, z, R, _, _ = Ef
+    @unpack H, z, R, = Ef
     δI = H(k)' * inv(R(k)) * H(k)
     δi = H(k)' * inv(R(k)) * z(k)
     return δI, δi

@@ -22,6 +22,25 @@ function test_agent_setup()
     return gt_params, gt_model, sample_locations, observer, observations
 end
 
+function quick_setup(; testing=true)
+    ϕ₀=[-0.5,0.5,0.75,0.5,-0.5]
+    gt_params=LGSFModelParameters(μ=hcat(range(-1,1,5), zeros(5)),σ=[1.],τ=[1.],ϕ₀=ϕ₀,A=nothing,Q=nothing)
+    gt_model=[initialize_SCRIBEModel_from_parameters(gt_params)]
+    
+    ag_params=LGSFModelParameters(μ=hcat(range(-1,1,5), zeros(5)),σ=[1.],τ=[1.],
+                                  ϕ₀=zeros(size(ϕ₀,1)),A=Matrix{Float64}(I(size(ϕ₀,1))),Q=Matrix{Float64}(I(size(ϕ₀,1))))
+    observer=LGSFObserverBehavior(0.3)
+    sample_locations=[]
+    init_agent_loc=[0. 0.;]
+    push!(sample_locations, init_agent_loc)
+    ag=initialize_agent(ag_params, observer, gt_model[1], init_agent_loc)
+    if testing; @test typeof(ag) == AgentEnvModel; end
+
+    lg_Fs=simple_LGSF_Estimators(ag)
+
+    return ϕ₀, gt_params, gt_model, ag_params, observer, sample_locations, ag, lg_Fs
+end
+
 function test_estimators(; testing=true)
     ϕ₀=[-0.5,0.5,0.75,0.5,-0.5]
     gt_params=LGSFModelParameters(μ=hcat(range(-1,1,5), zeros(5)),σ=[1.],τ=[1.],ϕ₀=ϕ₀,A=nothing,Q=nothing)
@@ -52,6 +71,7 @@ function test_estimators(; testing=true)
 
     # Add temporary lexical scoping for stupid testing
     let gt_model=deepcopy(gt_model), sample_locations=deepcopy(sample_locations), ag=deepcopy(ag)
+        lg_Fs=simple_LGSF_Estimators(ag)
 
         for i in 1:4
             push!(gt_model, update_SCRIBEModel(gt_model[i]))
