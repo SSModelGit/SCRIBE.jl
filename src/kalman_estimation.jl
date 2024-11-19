@@ -3,7 +3,7 @@ using Combinatorics: combinations
 
 export AgentEnvModel, initialize_agent, next_agent_state, next_agent_time, next_agent_info_state
 export SystemEstimators, simple_LGSF_Estimators, compute_info_priors, compute_innov_from_obs
-export centralized_fusion
+export centralized_fusion, recover_estimate_from_info, progress_agent_env_filter
 
 """Current discrete-time estimate of the linear system being observed.
 
@@ -25,17 +25,29 @@ function init_agent_estimate(world::SCRIBEModel, k::Integer,
                      scribe_observations(X,world,bhv))
 end
 
-function new_agent_estimate(world::SCRIBEModel, k::Integer,
-                            estimate::SCRIBEModel, ϕₖ::Vector{Float64},
-                            bhv::SCRIBEObserverBehavior, X::Matrix{Float64})
-    AgentEnvEstimate(k, update_SCRIBEModel(estimate, ϕₖ), scribe_observations(X, world, bhv))
-end
+# function new_agent_estimate(k::Integer,
+#                             old_estimate::SCRIBEModel, ϕₖ::Vector{Float64},
+#                             world::SCRIBEModel, bhv::SCRIBEObserverBehavior, X::Matrix{Float64})
+#     AgentEnvEstimate(k, update_SCRIBEModel(old_estimate, ϕₖ), scribe_observations(X, world, bhv))
+# end
 
 """Current discrete-time information.
 
 This is separate from the actual model estimate - this is what the Kalman Filter interacts with.
-
 The model estimate is a representation of the system, which is recovered from this.
+
+Combines y(t=k), Y(t=k), δi(t=k-1), and δI(t=k-1).
+These should truthfully be discussed separately.
+But to keep the implementation smoother, we aim to integrate them together.
+
+Innovation is only understood after z(k) is gained.
+However, y/Y(t=k) is necessary to update ϕⱼ(t=k), which then influences our choice of X(t=k) and thus z(k).
+Hence, we cannot create a structure that defines δi/δI(t=k) at the same time as y/Y(t=k).
+
+To allow for proper streamlining, we then say that δi/δI(t=k) is stored with y/Y(t=k+1).
+This is fine, because we never actually return to δi/δI(t=k) after y/Y(t=k+1) is learned.
+Essentially, the moment we calculate δi/δI(t=k), we immediately also calculate y/Y(t=k+1).
+From then on, δi/δI(t=k) becomes useless, so this treatment of δi/δI(t=k) with y/Y(t=k+1) is okay.
 """
 struct AgentEnvInfo
     y::Vector{Float64}
@@ -51,7 +63,9 @@ end
 """Initial information associated per agent.
 
 There is no information about the agent state, so all set to zero.
-There is no such thing as "inital innovation", so arbitrarily set to zero.
+
+This initial innovation state is not truly an "innovation state", but a meaningless prior.
+So, this is arbitrarily set to zero. This is described further in the docstring for AgentEnvInfo.
 """
 function init_agent_info(nᵩ::Integer)
     AgentEnvInfo(zeros(nᵩ), zeros(nᵩ,nᵩ), zeros(nᵩ), zeros(nᵩ,nᵩ))
@@ -71,6 +85,16 @@ The timing of this is slightly unintuitive.
     * The innovations values represent the innovation gained after observation at time (k).
     * The information values represent the updated information about the state after observation at time (k).
     * Accordingly, the system estimate at time (k+1) will be recovered from the information at time (k).
+* Agent Update Process:
+    * Agents are initialized at a location at t=1
+        * Initial values are estimate at t=1, observation at t=1 and initial location, initial information at t=1
+    * Each update step at t=k requires:
+        * Compute innovation gained from observation, generating δi & δI for t=k
+            * Recall that the information state at t=k also contains the innovation for t=k-1
+        * Compute information gained from observation, generating information state for t=k+1
+        * Refine estimate of the system, determining estimate values for t=k+1
+        * Construct "estimated system state", generating both estimate for t=k+1 and observation for t=k+1
+        * Progress internal clock from t=k to t=k+1
 """
 mutable struct AgentEnvModel
     k::Integer
@@ -92,12 +116,20 @@ end
 """Adds new internal system estimate for t=k+1.
 """
 function next_agent_state(agent::AgentEnvModel, ϕₖ::Vector{Float64}, cwrld::SCRIBEModel, X::Matrix{Float64})
-    push!(agent.estimates, new_agent_estimate(cwrld, agent.k+1, agent.estimates[agent.k].estimate, ϕₖ, agent.bhv, X))
+    let k=agent.k,
+        new_estimate=update_SCRIBEModel(agent.estimates[k].estimate, ϕₖ),
+        new_obs=scribe_observations(X, cwrld, agent.bhv)
+        push!(agent.estimates, AgentEnvEstimate(k, new_estimate, new_obs))
+    end
 end
 
-next_agent_time(agent::AgentEnvModel) = agent.k+=1
-
+"""Insert newest information state gained from info fusion into the agent representation.
+"""
 next_agent_info_state(agent::AgentEnvModel, info::AgentEnvInfo) = push!(agent.information, info)
+
+"""Update agent-internal clock.
+"""
+next_agent_time(agent::AgentEnvModel) = agent.k+=1
 
 struct SystemEstimators
     system::AgentEnvModel
@@ -111,7 +143,7 @@ struct SystemEstimators
     y::Function
 
     SystemEstimators(system::AgentEnvModel, A::Function, ϕ::Function, Q::Function,
-                     H::Function, z::Function, v::Function,
+                     H::Function, z::Function, R::Function,
                      Y::Function, y::Function) = new(system, A, ϕ, Q, H, z, R, Y, y)
 end
 
@@ -130,7 +162,7 @@ function simple_LGSF_Estimators(system::AgentEnvModel)
                      kY->get_Y(kY, system), ky->get_y(ky, system))
 end
 
-"""Computes the prior update **of the next step** Y⁻(k+1).
+"""Local computation of the prior update **of the next step** Y⁻(k+1).
 
 Takes two inputs:
 * Estimator functions (`Ef::SystemEstimators`)
@@ -138,10 +170,9 @@ Takes two inputs:
 """
 function compute_info_priors(Ef::SystemEstimators, k::Integer)
     @unpack _, A, _, Q, H, _, _, Y, y = Ef
-    M  = inv(A(k))' * Y(k-1) * inv(A(k))
-    C  = M + inv(Q(k))
-    Y⁻ = M - M * inv(C) * M
-    y⁻ = Y⁻ * A(k) * Y(k-1) * y(k-1)
+    M  = inv(A(k))' * Y(k) * inv(A(k))
+    Y⁻ = M - M * inv(M + inv(Q(k))) * M
+    y⁻ = Y⁻ * A(k) * Y(k) * y(k)
     return Y⁻, y⁻
 end
 
@@ -158,10 +189,12 @@ function compute_innov_from_obs(Ef::SystemEstimators, k::Integer)
     return δI, δi
 end
 
+"""Computes the information filter update for y(t=k+1) and Y(t=k+1) from z(k) and y/Y(t=k).
+"""
 function centralized_fusion(agent_estimators::Vector{SystemEstimators}, k::Integer)
-    nₐ=size(priors,1)
     # Compute priors from current system state at t=k and previous information state at t=k-1
     priors = map(ef->compute_info_priors(ef, k), agent_estimators)
+    nₐ=size(priors,1)
 
     # Ensure all priors are the same
     if nₐ>1
@@ -179,4 +212,19 @@ function centralized_fusion(agent_estimators::Vector{SystemEstimators}, k::Integ
     δī=mean(map(x->x[2], innovs))
 
     return [AgentEnvInfo(priors[a][2]+nₐ*δī, priors[a][1]+nₐ*δĪ, δī, δĪ) for a in 1:nₐ]
+end
+
+"""Recover the state estimate vector from given info state.
+"""
+recover_estimate_from_info(info::AgentEnvInfo) = inv(info.Y) * info.y
+
+"""Consolidated update process given new fused information estimates y/Y(t=k+1)
+
+Also requires the new state of the world and the new sampling locations.
+"""
+function progress_agent_env_filter(agent::AgentEnvModel, info::AgentEnvInfo, world::SCRIBEModel, X::Matrix{Float64})
+    ϕₖ=recover_estimate_from_info(info) # acquire ϕⱼ(t=k+1)
+    next_agent_info_state(agent, info) # set info(t=k+1)
+    next_agent_state(agent, ϕₖ, world, X) # set ϕⱼ(t=k+1); acquire and set z(t=k+1)
+    next_agent_time(agent) # k ⟵ k+1
 end

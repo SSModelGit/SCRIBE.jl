@@ -37,6 +37,7 @@ function test_estimators(; testing=true)
     if testing; @test typeof(ag) == AgentEnvModel; end
 
     lg_Fs=simple_LGSF_Estimators(ag)
+
     if testing
         @test lg_Fs.ϕ(1)==zeros(5)
         @test lg_Fs.A(1)==Matrix{Float64}(I(5))
@@ -71,12 +72,15 @@ function test_estimators(; testing=true)
         end
     end
 
+    fused_info=[ag.information[1]]
     for i in 1:100
+        push!(fused_info,centralized_fusion([lg_Fs], i)[1])
         push!(gt_model, update_SCRIBEModel(gt_model[i]))
         push!(sample_locations, 3*rand(5,2))
-        next_agent_state(ag,zeros(ag_params.nᵩ), gt_model[i+1], sample_locations[i+1])
-        next_agent_time(ag)
-        next_agent_info_state(ag, centralized_fusion([ag], ag.k)[1])
+        progress_agent_env_filter(ag, fused_info[end], gt_model[i+1], sample_locations[i+1])
+        # next_agent_state(ag,zeros(ag_params.nᵩ), gt_model[i+1], sample_locations[i+1])
+        # next_agent_time(ag)
+        # next_agent_info_state(ag, centralized_fusion([ag], ag.k)[1])
     end
 
     return ag, lg_Fs
