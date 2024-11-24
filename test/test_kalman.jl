@@ -15,6 +15,7 @@ function test_agent_setup()
     init_sample_loc = [1 1.]
     push!(sample_locations, init_sample_loc)
     observations=[scribe_observations(init_sample_loc,gt_model[1],observer)]
+    sample_locations[end] = observations[1].X
 
     @test typeof(observations[1]) <: SCRIBEObserverState
     @test isapprox(observations[1].X,sample_locations[1])
@@ -37,8 +38,9 @@ function quick_setup(nᵩ=2; testing=true)
     observer=LGSFObserverBehavior(0.3)
     sample_locations=[]
     init_agent_loc=[0. 0.;]
-    push!(sample_locations, init_agent_loc)
     ag=initialize_agent(ag_params, observer, gt_model[1], init_agent_loc)
+    # push!(sample_locations, init_agent_loc)
+    push!(sample_locations, ag.estimates[1].observations.X)
     if testing; @test typeof(ag) == AgentEnvModel; end
 
     lg_Fs=simple_LGSF_Estimators(ag)
@@ -61,10 +63,13 @@ function test_estimators(; testing=true)
         @test_throws BoundsError lg_Fs.z(2)
     end
 
+    sz = (2,2)
+    new_loc = zeros(sz...)
     for i in 1:4
         push!(gt_model, update_SCRIBEModel(gt_model[i]))
-        push!(sample_locations, rand(2,2))
-        next_agent_state(ag,zeros(ag_params.nᵩ), gt_model[i+1], sample_locations[i+1])
+        new_loc = rand(sz...)
+        next_agent_state(ag,zeros(ag_params.nᵩ), gt_model[i+1], new_loc)
+        push!(sample_locations, ag.estimates[i+1].observations.X)
     end
         
     if testing
@@ -85,11 +90,14 @@ function test_centralized_KF(; testing=true)
     nᵩ=ag_params.nᵩ # storing for easier debugging
 
     fused_info=Any[ag.information[1]]
+    sz=(2,2)
+    new_loc = zeros(sz...)
     for i in 1:100
         push!(fused_info,centralized_fusion([lg_Fs], i)[1])
         push!(gt_model, update_SCRIBEModel(gt_model[i]))
-        push!(sample_locations, 3*rand(2,2))
-        progress_agent_env_filter(ag, fused_info[end], gt_model[i+1], sample_locations[i+1])
+        new_loc = 3*rand(sz...)
+        progress_agent_env_filter(ag, fused_info[end], gt_model[i+1], new_loc)
+        push!(sample_locations, ag.estimates[i+1].observations.X)
         # next_agent_state(ag,zeros(ag_params.nᵩ), gt_model[i+1], sample_locations[i+1])
         # next_agent_time(ag)
         # next_agent_info_state(ag, centralized_fusion([ag], ag.k)[1])

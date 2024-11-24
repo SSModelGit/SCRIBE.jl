@@ -4,7 +4,7 @@ export SCRIBEModel, SCRIBEModelParameters, initialize_SCRIBEModel_from_parameter
 export SCRIBEObserverBehavior, SCRIBEObserverState, compute_obs_dynamics, scribe_observations
 
 using GaussianDistributions: Gaussian
-using LinearAlgebra: norm, I, ⋅
+using LinearAlgebra: norm, I, ⋅, rank
 
 """Abstract type defined for specialization during model instantiation.
 

@@ -168,16 +168,33 @@ struct LGSFObserverState <: SCRIBEObserverState
     end
 end
 
-"""Compute the observation dynamics matrix.
+"""Compute the observation dynamics matrix `H`.
 
-This is also referred to as the **H matrix**.
+Takes steps to ensure the resultant observation matrix is not rank-deficient.
+It does so by perturbing the input sample location by 10x the rank-deficience tolerance.
+
+Returns:
+    * `H`: The observation matrix
+    * `X`: The end sample location (after potential perturbation).
 """
-compute_obs_dynamics(smodel::LGSFModel, X::Matrix{Float64}) = mapslices(smodel.ψ,X,dims=2)
+function compute_obs_dynamics(smodel::LGSFModel, X::Matrix{Float64}; tol=0.001)
+    let H=mapslices(smodel.ψ,X,dims=2)
+        if check_observability(H, tol)
+            return H, X
+        else
+            return compute_obs_dynamics(smodel, X+10*tol*rand(size(X)...); tol=tol)
+        end
+    end
+end
+
+"""Checks the rank of the observability matrix.
+"""
+check_observability(H::Matrix{Float64}, tol::Float64) = rank(H, atol=tol) ≥ minimum(size(H))
 
 function scribe_observations(X::Matrix{Float64}, smodel::LGSFModel, o_b::LGSFObserverBehavior)
     let nₛ=size(X,1), v_s=o_b.v_s, R=v_s[:σ]*I(nₛ)
         v=Dict(:R=>R, :k=>rand(Gaussian(zeros(nₛ), R)))
-        H=compute_obs_dynamics(smodel, X)
+        (H, X)=compute_obs_dynamics(smodel, X)
         z=muladd(H,smodel.ϕ,v[:k])
         LGSFObserverState(smodel.k, nₛ, X, H, v, z)
     end
