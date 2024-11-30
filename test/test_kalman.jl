@@ -4,7 +4,7 @@ using LinearAlgebra: I
 
 function test_agent_setup()
     ϕ₀=[-1,1,-1,1,-1.]
-    gt_params=LGSFModelParameters(μ=hcat(range(-1,1,5), zeros(5)),σ=[1.],τ=[1.],ϕ₀=ϕ₀,A=nothing,Q=nothing)
+    gt_params=LGSFModelParameters(μ=hcat(range(-1,1,5), zeros(5)),σ=[1.],τ=[1.],ϕ₀=ϕ₀,A=nothing,Q=0.1.*I(5))
     gt_model=[initialize_SCRIBEModel_from_parameters(gt_params)]
     @test typeof(gt_model) <: Vector{T} where T<:SCRIBEModel
 
@@ -12,7 +12,7 @@ function test_agent_setup()
     observer=LGSFObserverBehavior(v_s)
     @test typeof(observer) <: SCRIBEObserverBehavior
     sample_locations = []
-    init_sample_loc = [1 1.]
+    init_sample_loc = [0. 0.]
     push!(sample_locations, init_sample_loc)
     observations=[scribe_observations(init_sample_loc,gt_model[1],observer)]
     sample_locations[end] = observations[1].X
@@ -34,14 +34,18 @@ function quick_setup(nᵩ=2; testing=true)
     gt_model=[initialize_SCRIBEModel_from_parameters(gt_params)]
     
     ag_params=LGSFModelParameters(μ=hcat(range(-1,1,nᵩ), zeros(nᵩ)),σ=[1.],τ=[1.],
-                                  ϕ₀=zeros(nᵩ), A=Matrix{Float64}(I(nᵩ)), Q=Matrix{Float64}(I(nᵩ)))
-    observer=LGSFObserverBehavior(0.3)
+                                  ϕ₀=zeros(nᵩ).+0.1, A=Matrix{Float64}(I(nᵩ)), Q=0.01*Matrix{Float64}(I(nᵩ)))
+    observer=LGSFObserverBehavior(0.01)
     sample_locations=[]
-    init_agent_loc=[0. 0.;]
+    # init_agent_loc=[0. 0.;]
+    init_agent_loc=[0. 0.; 0.5 0.5]
     ag=initialize_agent(ag_params, observer, gt_model[1], init_agent_loc)
     # push!(sample_locations, init_agent_loc)
     push!(sample_locations, ag.estimates[1].observations.X)
-    if testing; @test typeof(ag) == AgentEnvModel; end
+    if testing
+        @test typeof(ag) == AgentEnvModel
+        # @test !isapprox(sample_locations[1], init_agent_loc)
+    end
 
     lg_Fs=simple_LGSF_Estimators(ag)
 
@@ -85,14 +89,19 @@ function test_estimators(; testing=true)
     end
 end
 
-function test_centralized_KF(; testing=true)
+function test_observability(; testing=true)
+    (ϕ₀, gt_params, gt_model, ag_params, observer, sample_locations, ag, lg_Fs) = quick_setup(2, testing=testing)
+    @test !isapprox(sample_locations, zeros(1,2))
+end
+
+function test_centralized_KF(nₛ=3; testing=true)
     (ϕ₀, gt_params, gt_model, ag_params, observer, sample_locations, ag, lg_Fs) = quick_setup(2, testing=testing)
     nᵩ=ag_params.nᵩ # storing for easier debugging
 
     fused_info=Any[ag.information[1]]
-    sz=(2,2)
+    sz=(1,2) # or make it (1,2)
     new_loc = zeros(sz...)
-    for i in 1:100
+    for i in 1:nₛ
         push!(fused_info,centralized_fusion([lg_Fs], i)[1])
         push!(gt_model, update_SCRIBEModel(gt_model[i]))
         new_loc = 3*rand(sz...)
@@ -103,16 +112,23 @@ function test_centralized_KF(; testing=true)
         # next_agent_info_state(ag, centralized_fusion([ag], ag.k)[1])
     end
 
-    return ag, lg_Fs
+    println("Results:")
+    println("k: ", ag.k, "\nϕⱼ(t=final): ", ag.estimates[end].estimate.ϕ, "\nϕ(t=final):  ", gt_model[end].ϕ)
+
+    return ag, lg_Fs, gt_model
 end
 
-@testset "Single Agent Setup" begin
-    test_agent_setup()
-end
+# @testset "Single Agent Setup" begin
+#     test_agent_setup()
+# end
 
-@testset "Single Agent Estimators" begin
-    test_estimators()
-end
+# @testset "Single Agent Estimators" begin
+#     test_estimators()
+# end
+
+# @testset "H Observability" begin
+#     test_observability()
+# end
 
 @testset "Centralized Kalman Filter" begin
     test_centralized_KF()

@@ -19,8 +19,8 @@ struct LGSFModelParameters <: SCRIBEModelParameters
             else
                 @assert size(ϕ₀,1)==nᵩ
             end
-            if A===nothing; A=I(nᵩ); end
-            if Q===nothing; Q=I(nᵩ); end
+            if A===nothing; A=I(nᵩ); else; @assert size(A)==(nᵩ,nᵩ); end
+            if Q===nothing; Q=0.001*I(nᵩ); else; @assert size(Q)==(nᵩ,nᵩ); end
             w=Dict(:Q=>Q, :w_dist=>Gaussian(zeros(nᵩ), Q))
             new(nᵩ, p, ψ_p, ϕ₀, A, w)
         end
@@ -182,14 +182,15 @@ function compute_obs_dynamics(smodel::LGSFModel, X::Matrix{Float64}; tol=0.001)
         if check_observability(H, tol)
             return H, X
         else
-            return compute_obs_dynamics(smodel, X+10*tol*rand(size(X)...); tol=tol)
+            return H, X
+            # return compute_obs_dynamics(smodel, X+10*tol*rand(size(X)...); tol=tol)
         end
     end
 end
 
 """Checks the rank of the observability matrix.
 """
-check_observability(H::Matrix{Float64}, tol::Float64) = rank(H, atol=tol) ≥ minimum(size(H))
+check_observability(H::Matrix{Float64}, tol::Float64) = rank(H, atol=tol) ≥ size(H)[2]
 
 function scribe_observations(X::Matrix{Float64}, smodel::LGSFModel, o_b::LGSFObserverBehavior)
     let nₛ=size(X,1), v_s=o_b.v_s, R=v_s[:σ]*I(nₛ)

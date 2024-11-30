@@ -120,7 +120,7 @@ function next_agent_state(agent::AgentEnvModel, ϕₖ::Vector{Float64}, cwrld::S
     let k=agent.k,
         new_estimate=update_SCRIBEModel(agent.estimates[k].estimate, ϕₖ),
         new_obs=scribe_observations(X, cwrld, agent.bhv)
-        push!(agent.estimates, AgentEnvEstimate(k, new_estimate, new_obs))
+        push!(agent.estimates, AgentEnvEstimate(k+1, new_estimate, new_obs))
     end
 end
 
@@ -152,7 +152,7 @@ function simple_LGSF_Estimators(system::AgentEnvModel)
     get_A(k, system) = system.estimates[k].estimate.params.A
     get_ϕ(k, system) = system.estimates[k].estimate.ϕ
     get_Q(k, system) = system.params.w[:Q]
-    get_H(k, system) = compute_obs_dynamics(system.estimates[k].estimate, system.estimates[k].observations.X)
+    get_H(k, system) = compute_obs_dynamics(system.estimates[k].estimate, system.estimates[k].observations.X)[1]
     get_z(k, system) = system.estimates[k].observations.z
     get_R(k, system) = system.estimates[k].observations.v[:R]
     get_Y(k, system) = system.information[k].Y
@@ -175,6 +175,8 @@ function compute_info_priors(Ef::SystemEstimators, k::Integer)
     M  = inv(A(k))' * Y(k) * inv(A(k))
     Y⁻ = M - M * inv(M + inv(Q(k))) * M
     y⁻ = Y⁻ * A(k) * Y(k) * y(k)
+    println("k: ", k, " | y⁻: ", y⁻)
+    println("k: ", k, " | Y⁻: ", Y⁻)
     return Y⁻, y⁻
 end
 
