@@ -4,7 +4,7 @@ using LinearAlgebra: I
 
 function test_agent_setup()
     ϕ₀=[-1,1,-1,1,-1.]
-    gt_params=LGSFModelParameters(μ=hcat(range(-1,1,5), zeros(5)),σ=[1.],τ=[1.],ϕ₀=ϕ₀,A=nothing,Q=0.1.*I(5))
+    gt_params=LGSFModelParameters(μ=hcat(range(-1,1,5), zeros(5)),σ=[1.],τ=[1.],ϕ₀=ϕ₀,A=nothing,Q=0.1.*Matrix{Float64}(I(5)))
     gt_model=[initialize_SCRIBEModel_from_parameters(gt_params)]
     @test typeof(gt_model) <: Vector{T} where T<:SCRIBEModel
 
@@ -84,8 +84,8 @@ function test_estimators(; testing=true)
         @test_throws BoundsError lg_Fs.z(6)
 
         @test all([isapprox(lg_Fs.ϕ(i), zeros(5)) for i in 1:5])
-        @test !all([size(lg_Fs.H(i))==(2,5) for i in 1:5])
-        @test all([size(lg_Fs.H(i))==(2,5) for i in 2:5])
+        @test all([size(lg_Fs.H(i))==(2,5) for i in 1:5])
+        # @test all([size(lg_Fs.H(i))==(2,5) for i in 2:5])
         @test all([size(lg_Fs.z(i))==(2,) for i in 2:5])
     end
 end
