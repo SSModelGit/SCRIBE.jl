@@ -189,6 +189,8 @@ function compute_obs_dynamics(smodel::LGSFModel, X::Matrix{Float64}; tol=0.001)
 end
 
 """Checks the rank of the observability matrix.
+
+Doesn't currently work - ignore the output.
 """
 check_observability(H::Matrix{Float64}, tol::Float64) = rank(H, atol=tol) ≥ size(H)[2]
 

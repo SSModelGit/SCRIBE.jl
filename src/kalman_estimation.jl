@@ -2,19 +2,19 @@ using Combinatorics: combinations
 using Parameters: @unpack
 using Statistics: mean
 
-export AgentEnvModel, initialize_agent, next_agent_state, next_agent_time, next_agent_info_state
-export SystemEstimators, simple_LGSF_Estimators, compute_info_priors, compute_innov_from_obs
-export centralized_fusion, recover_estimate_from_info, progress_agent_env_filter
+export KFEnvScribe, initialize_scribe, next_agent_state, next_agent_time, next_agent_info_state
+export KFEstimators, initialize_estimators, compute_info_priors, compute_innov_from_obs
+export centralized_fusion, recover_estimate_from_info, progress_agent_env_filter, initialize_KF
 
 """Current discrete-time estimate of the linear system being observed.
 
 Will store the discrete time of estimation for redundancy checking.
 """
-struct AgentEnvEstimate
+struct KFEnvEstimate
     k::Integer
     estimate::SCRIBEModel
     observations::SCRIBEObserverState
-    function AgentEnvEstimate(k::Integer, estimate::SCRIBEModel, observations::SCRIBEObserverState)
+    function KFEnvEstimate(k::Integer, estimate::SCRIBEModel, observations::SCRIBEObserverState)
         new(k, estimate, observations)
     end
 end
@@ -22,14 +22,14 @@ end
 function init_agent_estimate(world::SCRIBEModel, k::Integer,
                              params::SCRIBEModelParameters, bhv::SCRIBEObserverBehavior,
                              X::VecOrMat{Float64})
-    AgentEnvEstimate(k, initialize_SCRIBEModel_from_parameters(params, k=k),
+    KFEnvEstimate(k, initialize_SCRIBEModel_from_parameters(params, k=k),
                      scribe_observations(X,world,bhv))
 end
 
 # function new_agent_estimate(k::Integer,
 #                             old_estimate::SCRIBEModel, ϕₖ::Vector{Float64},
 #                             world::SCRIBEModel, bhv::SCRIBEObserverBehavior, X::Matrix{Float64})
-#     AgentEnvEstimate(k, update_SCRIBEModel(old_estimate, ϕₖ), scribe_observations(X, world, bhv))
+#     KFEnvEstimate(k, update_SCRIBEModel(old_estimate, ϕₖ), scribe_observations(X, world, bhv))
 # end
 
 """Current discrete-time information.
@@ -50,13 +50,13 @@ This is fine, because we never actually return to δi/δI(t=k) after y/Y(t=k+1) 
 Essentially, the moment we calculate δi/δI(t=k), we immediately also calculate y/Y(t=k+1).
 From then on, δi/δI(t=k) becomes useless, so this treatment of δi/δI(t=k) with y/Y(t=k+1) is okay.
 """
-struct AgentEnvInfo
+struct KFEnvInfo
     y::Vector{Float64}
     Y::Matrix{Float64}
     i::Vector{Float64}
     I::Matrix{Float64}
 
-    AgentEnvInfo(y::Vector{Float64}, Y::Matrix{Float64},
+    KFEnvInfo(y::Vector{Float64}, Y::Matrix{Float64},
                  i::Vector{Float64}, I::Matrix{Float64}) = new(y,Y,i,I)
 end
 
@@ -66,11 +66,16 @@ end
 There is no information about the agent state, so all set to zero.
 
 This initial innovation state is not truly an "innovation state", but a meaningless prior.
-So, this is arbitrarily set to zero. This is described further in the docstring for AgentEnvInfo.
+So, this is arbitrarily set to zero. This is described further in the docstring for KFEnvInfo.
 """
 function init_agent_info(nᵩ::Integer)
-    AgentEnvInfo(zeros(nᵩ), zeros(nᵩ,nᵩ), zeros(nᵩ), zeros(nᵩ,nᵩ))
+    # KFEnvInfo(zeros(nᵩ), zeros(nᵩ,nᵩ), zeros(nᵩ), zeros(nᵩ,nᵩ))
+    KFEnvInfo(ones(nᵩ).*eps(), Matrix{Float64}(I(nᵩ).*eps()), zeros(nᵩ), zeros(nᵩ,nᵩ))
 end
+
+"""Specializing the `copy` function for KFEnvInfo.
+"""
+Base.copy(i::KFEnvInfo) = KFEnvInfo(copy(i.y), copy(i.Y), copy(i.i), copy(i.I))
 
 """This is the collection of the system over time.
 
@@ -97,43 +102,43 @@ The timing of this is slightly unintuitive.
         * Construct "estimated system state", generating both estimate for t=k+1 and observation for t=k+1
         * Progress internal clock from t=k to t=k+1
 """
-mutable struct AgentEnvModel
+mutable struct KFEnvScribe <: EnvScribe
     k::Integer
     cwrld_sync::Integer
     params::SCRIBEModelParameters
     bhv::SCRIBEObserverBehavior
-    estimates::Vector{AgentEnvEstimate}
-    information::Vector{AgentEnvInfo}
+    estimates::Vector{KFEnvEstimate}
+    information::Vector{KFEnvInfo}
 
-    AgentEnvModel(k::Integer, cwrld_sync::Integer, params::SCRIBEModelParameters, bhv::SCRIBEObserverBehavior,
-                  estimates::Vector{AgentEnvEstimate},
-                  information::Vector{AgentEnvInfo}) = new(k, cwrld_sync, params, bhv, estimates, information)
+    KFEnvScribe(k::Integer, cwrld_sync::Integer, params::SCRIBEModelParameters, bhv::SCRIBEObserverBehavior,
+                estimates::Vector{KFEnvEstimate},
+                information::Vector{KFEnvInfo}) = new(k, cwrld_sync, params, bhv, estimates, information)
 end
 
-function initialize_agent(params::SCRIBEModelParameters, bhv::SCRIBEObserverBehavior, cwrld::SCRIBEModel, X₀::Matrix{Float64})
-    AgentEnvModel(1, cwrld.k-1, params, bhv, [init_agent_estimate(cwrld, 1, params, bhv, X₀)], [init_agent_info(params.nᵩ)])
+function initialize_scribe(params::SCRIBEModelParameters, bhv::SCRIBEObserverBehavior, cwrld::SCRIBEModel, X₀::Matrix{Float64})
+    KFEnvScribe(1, cwrld.k-1, params, bhv, [init_agent_estimate(cwrld, 1, params, bhv, X₀)], [init_agent_info(params.nᵩ)])
 end
 
 """Adds new internal system estimate for t=k+1.
 """
-function next_agent_state(agent::AgentEnvModel, ϕₖ::Vector{Float64}, cwrld::SCRIBEModel, X::Matrix{Float64})
+function next_agent_state(agent::KFEnvScribe, ϕₖ::Vector{Float64}, cwrld::SCRIBEModel, X::Matrix{Float64})
     let k=agent.k,
         new_estimate=update_SCRIBEModel(agent.estimates[k].estimate, ϕₖ),
         new_obs=scribe_observations(X, cwrld, agent.bhv)
-        push!(agent.estimates, AgentEnvEstimate(k+1, new_estimate, new_obs))
+        push!(agent.estimates, KFEnvEstimate(k+1, new_estimate, new_obs))
     end
 end
 
 """Insert newest information state gained from info fusion into the agent representation.
 """
-next_agent_info_state(agent::AgentEnvModel, info::AgentEnvInfo) = push!(agent.information, info)
+next_agent_info_state(agent::KFEnvScribe, info::KFEnvInfo) = push!(agent.information, info)
 
 """Update agent-internal clock.
 """
-next_agent_time(agent::AgentEnvModel) = agent.k+=1
+next_agent_time(agent::KFEnvScribe) = agent.k+=1
 
-struct SystemEstimators
-    system::AgentEnvModel
+struct KFEstimators <: EnvEstimators
+    system::KFEnvScribe
     A::Function
     ϕ::Function
     Q::Function
@@ -143,50 +148,68 @@ struct SystemEstimators
     Y::Function
     y::Function
 
-    SystemEstimators(system::AgentEnvModel, A::Function, ϕ::Function, Q::Function,
+    KFEstimators(system::KFEnvScribe, A::Function, ϕ::Function, Q::Function,
                      H::Function, z::Function, R::Function,
                      Y::Function, y::Function) = new(system, A, ϕ, Q, H, z, R, Y, y)
 end
 
-function simple_LGSF_Estimators(system::AgentEnvModel)
+"""Instantiates some simple estimator functions for the LGSF model.
+
+Note that the observation matrix H must be seperately computed each timestep.
+The `H` used here is the current agent approximation of the true observation matrix.
+
+The initialization will dispatch on the params type.
+Currently, only the LGSFModelParameters are implemented.
+"""
+function initialize_estimators(system::KFEnvScribe, params::LGSFModelParameters)
     get_A(k, system) = system.estimates[k].estimate.params.A
     get_ϕ(k, system) = system.estimates[k].estimate.ϕ
-    get_Q(k, system) = system.params.w[:Q]
+    get_Q(k, system) = params.w[:Q]
     get_H(k, system) = compute_obs_dynamics(system.estimates[k].estimate, system.estimates[k].observations.X)[1]
     get_z(k, system) = system.estimates[k].observations.z
     get_R(k, system) = system.estimates[k].observations.v[:R]
     get_Y(k, system) = system.information[k].Y
     get_y(k, system) = system.information[k].y
 
-    SystemEstimators(system, kA->get_A(kA, system), kϕ->get_ϕ(kϕ, system), kQ->get_Q(kQ, system),
-                     kH->get_H(kH, system), kz->get_z(kz, system), kR->get_R(kR, system),
-                     kY->get_Y(kY, system), ky->get_y(ky, system))
+    KFEstimators(system, kA->get_A(kA, system), kϕ->get_ϕ(kϕ, system), kQ->get_Q(kQ, system),
+                 kH->get_H(kH, system), kz->get_z(kz, system), kR->get_R(kR, system),
+                 kY->get_Y(kY, system), ky->get_y(ky, system))
 end
 
 """Local computation of the prior update **of the next step** Y⁻(k+1).
 
 Takes two inputs:
-* Estimator functions (`Ef::SystemEstimators`)
+* Estimator functions (`Ef::KFEstimators`)
 * The **current** timestep `k`. It will use this along `Ef` to lookup corresponding system information.
 """
-function compute_info_priors(Ef::SystemEstimators, k::Integer)
+function compute_info_priors(Ef::KFEstimators, k::Integer)
     # @unpack _, A, _, Q, H, _, _, Y, y = Ef
-    @unpack A, Q, H, Y, y = Ef
-    M  = inv(A(k))' * Y(k) * inv(A(k))
-    Y⁻ = M - M * inv(M + inv(Q(k))) * M
-    y⁻ = Y⁻ * A(k) * Y(k) * y(k)
-    println("k: ", k, " | y⁻: ", y⁻)
-    println("k: ", k, " | Y⁻: ", Y⁻)
-    return Y⁻, y⁻
+    @unpack A, Q, Y, y = Ef
+    let A=A(k), Y=Y(k), Yinv=inv(Y), Q=Q(k), y=y(k)
+        Y⁻ = inv(A * Yinv * A' + Q)
+        y⁻ = Y⁻ * A * Yinv * y
+        return Y⁻, y⁻
+    end
 end
+
+# function compute_info_priors(Ef::KFEstimators, k::Integer)
+#     # @unpack _, A, _, Q, H, _, _, Y, y = Ef
+#     @unpack A, Q, Y, y = Ef
+#     let A=A(k), Y=Y(k), Q=Q(k), y=y(k)
+#         M  = inv(A)' * Y * inv(A)
+#         Y⁻ = M - M * inv(M + inv(Q)) * M
+#         y⁻ = Y⁻ * A * inv(Y) * y
+#         return Y⁻, y⁻
+#     end
+# end
 
 """Computes the current innovation gained by observation at time k.
 
 Takes two inputs:
-* Estimator functions (`Ef::SystemEstimators`)
+* Estimator functions (`Ef::KFEstimators`)
 * The **current** timestep `k`. It will use this along `Ef` to lookup corresponding system information.
 """
-function compute_innov_from_obs(Ef::SystemEstimators, k::Integer)
+function compute_innov_from_obs(Ef::KFEstimators, k::Integer)
     @unpack H, z, R, = Ef
     δI = H(k)' * inv(R(k)) * H(k)
     δi = H(k)' * inv(R(k)) * z(k)
@@ -195,7 +218,7 @@ end
 
 """Computes the information filter update for y(t=k+1) and Y(t=k+1) from z(k) and y/Y(t=k).
 """
-function centralized_fusion(agent_estimators::Vector{SystemEstimators}, k::Integer)
+function centralized_fusion(agent_estimators::Vector{KFEstimators}, k::Integer)
     # Compute priors from current system state at t=k and previous information state at t=k-1
     priors = map(ef->compute_info_priors(ef, k), agent_estimators)
     nₐ=size(priors,1)
@@ -215,20 +238,26 @@ function centralized_fusion(agent_estimators::Vector{SystemEstimators}, k::Integ
     δĪ=mean(map(x->x[1], innovs))
     δī=mean(map(x->x[2], innovs))
 
-    return [AgentEnvInfo(priors[a][2]+nₐ*δī, priors[a][1]+nₐ*δĪ, δī, δĪ) for a in 1:nₐ]
+    return [KFEnvInfo(priors[a][2]+nₐ*δī, priors[a][1]+nₐ*δĪ, δī, δĪ) for a in 1:nₐ]
 end
 
 """Recover the state estimate vector from given info state.
 """
-recover_estimate_from_info(info::AgentEnvInfo) = inv(info.Y) * info.y
+recover_estimate_from_info(info::KFEnvInfo) = inv(info.Y) * info.y
 
 """Consolidated update process given new fused information estimates y/Y(t=k+1)
 
 Also requires the new state of the world and the new sampling locations.
 """
-function progress_agent_env_filter(agent::AgentEnvModel, info::AgentEnvInfo, world::SCRIBEModel, X::Matrix{Float64})
+function progress_agent_env_filter(agent::KFEnvScribe, info::KFEnvInfo, world::SCRIBEModel, X::Matrix{Float64})
     ϕₖ=recover_estimate_from_info(info) # acquire ϕⱼ(t=k+1)
     next_agent_info_state(agent, info) # set info(t=k+1)
     next_agent_state(agent, ϕₖ, world, X) # set ϕⱼ(t=k+1); acquire and set z(t=k+1)
     next_agent_time(agent) # k ⟵ k+1
+end
+
+"""Initialize the Kalman Filter system.
+"""
+function initialize_KF(params::SCRIBEModelParameters, observer::SCRIBEObserverBehavior, init_loc::Matrix{Float64}, ground_state::SCRIBEModel)
+    initialize_estimators(initialize_scribe(params, observer, ground_state, init_loc), params)
 end

@@ -23,37 +23,38 @@ function test_agent_setup()
     return gt_params, gt_model, sample_locations, observer, observations
 end
 
-function quick_setup(nᵩ=2; testing=true)
-    if nᵩ==2
-        ϕ₀=[-0.5,0.5]
-    else
-        ϕ₀=[-0.5,0.5,0.75,0.5,-0.5]
-    end
+"""Rapid-fire (potentially homogeneous multi-agent) setup.
 
-    gt_params=LGSFModelParameters(μ=hcat(range(-1,1,nᵩ), zeros(nᵩ)),σ=[1.],τ=[1.],ϕ₀=ϕ₀,A=nothing,Q=nothing)
+In the case of multiple agents, the only differences will be in initial locations.
+All agents will start at [0. 0.].
+"""
+function quick_setup(nᵩ=2; testing=true, nₐ=1)
+    ϕ₀ = (nᵩ==2) ? [-0.5,0.5] : [-0.5,0.5,0.75,0.5,-0.5]
+
+    gt_params=LGSFModelParameters(μ=hcat(range(-1,1,nᵩ), zeros(nᵩ)),σ=[1.],τ=[1.],ϕ₀=ϕ₀,A=nothing,
+                                  Q=0.000001*Matrix{Float64}(I(nᵩ)))
     gt_model=[initialize_SCRIBEModel_from_parameters(gt_params)]
-    
-    ag_params=LGSFModelParameters(μ=hcat(range(-1,1,nᵩ), zeros(nᵩ)),σ=[1.],τ=[1.],
-                                  ϕ₀=zeros(nᵩ).+0.1, A=Matrix{Float64}(I(nᵩ)), Q=0.01*Matrix{Float64}(I(nᵩ)))
-    observer=LGSFObserverBehavior(0.01)
-    sample_locations=[]
-    # init_agent_loc=[0. 0.;]
-    init_agent_loc=[0. 0.; 0.5 0.5]
-    ag=initialize_agent(ag_params, observer, gt_model[1], init_agent_loc)
-    # push!(sample_locations, init_agent_loc)
-    push!(sample_locations, ag.estimates[1].observations.X)
-    if testing
-        @test typeof(ag) == AgentEnvModel
-        # @test !isapprox(sample_locations[1], init_agent_loc)
+
+    agents = Vector{SCRIBEAgent}(undef, nₐ)
+    for a in 1:nₐ
+        ag_params=LGSFModelParameters(μ=hcat(range(-1,1,nᵩ), zeros(nᵩ)),σ=[1.],τ=[1.],
+                                      ϕ₀=zeros(nᵩ), A=Matrix{Float64}(I(nᵩ)),
+                                      Q=0.0001*Matrix{Float64}(I(nᵩ)))
+        observer=LGSFObserverBehavior(0.01)
+        init_agent_loc=[0. 0.; -0.5 -0.5] + [0. 0.; a-1 a-1]
+        lg_Fs = initialize_KF(ag_params, observer, copy(init_agent_loc), gt_model[1])
+        agents[a] = initialize_agent(lg_Fs)
     end
 
-    lg_Fs=simple_LGSF_Estimators(ag)
-
-    return ϕ₀, gt_params, gt_model, ag_params, observer, sample_locations, ag, lg_Fs
+    return gt_model, agents
 end
 
 function test_estimators(; testing=true)
-    (ϕ₀, gt_params, gt_model, ag_params, observer, sample_locations, ag, lg_Fs) = quick_setup(5, testing=testing)
+    (gt_model, agents) = quick_setup(5, testing=testing)
+    ag = agents[1].agent
+    lg_Fs = agents[1].estimators
+    ag_params = agents[1].params
+    sample_locations = agents[1].history
 
     if testing
         @test lg_Fs.ϕ(1)==zeros(5)
@@ -90,46 +91,94 @@ function test_estimators(; testing=true)
 end
 
 function test_observability(; testing=true)
-    (ϕ₀, gt_params, gt_model, ag_params, observer, sample_locations, ag, lg_Fs) = quick_setup(2, testing=testing)
+    (gt_model, agents) = quick_setup(5, testing=testing)
+    sample_locations = agents[1].history
     @test !isapprox(sample_locations, zeros(1,2))
 end
 
-function test_centralized_KF(nₛ=3; testing=true)
-    (ϕ₀, gt_params, gt_model, ag_params, observer, sample_locations, ag, lg_Fs) = quick_setup(2, testing=testing)
-    nᵩ=ag_params.nᵩ # storing for easier debugging
+function single_agent_centralized_KF(nₛ=100; testing=true, tol=0.1,)
+    nᵩ=2 # storing for easier debugging
+    (gt_model, agents) = quick_setup(nᵩ, testing=testing)
+    sagent = agents[1]
+    ag = sagent.agent
+    lg_Fs = sagent.estimators
+    ag_params = sagent.params
+    sample_locations = sagent.history
 
     fused_info=Any[ag.information[1]]
     sz=(1,2) # or make it (1,2)
-    new_loc = zeros(sz...)
+    new_loc = [0. 0.; 0.5 0.5]
+    # new_loc = zeros(sz...)
     for i in 1:nₛ
         push!(fused_info,centralized_fusion([lg_Fs], i)[1])
         push!(gt_model, update_SCRIBEModel(gt_model[i]))
-        new_loc = 3*rand(sz...)
-        progress_agent_env_filter(ag, fused_info[end], gt_model[i+1], new_loc)
+        # new_loc = 3*rand(sz...)
+        # progress_agent_env_filter(ag, fused_info[end], gt_model[i+1], new_loc)
+        progress_agent_env_filter(ag, fused_info[end], gt_model[i+1], copy(new_loc))
         push!(sample_locations, ag.estimates[i+1].observations.X)
-        # next_agent_state(ag,zeros(ag_params.nᵩ), gt_model[i+1], sample_locations[i+1])
-        # next_agent_time(ag)
-        # next_agent_info_state(ag, centralized_fusion([ag], ag.k)[1])
     end
 
+    fvals = Dict(:ϕⱼ=>ag.estimates[end].estimate.ϕ, :ϕ=>gt_model[end].ϕ)
+
     println("Results:")
-    println("k: ", ag.k, "\nϕⱼ(t=final): ", ag.estimates[end].estimate.ϕ, "\nϕ(t=final):  ", gt_model[end].ϕ)
+    println("k: ", ag.k, "\nϕⱼ(t=final): ", fvals[:ϕⱼ], "\nϕ(t=final):  ", fvals[:ϕ])
+
+    if testing
+        @test all(abs.(fvals[:ϕⱼ]-fvals[:ϕ]) .< tol)
+    end
 
     return ag, lg_Fs, gt_model
 end
 
-# @testset "Single Agent Setup" begin
-#     test_agent_setup()
-# end
+function mul_agent_centralized_KF(nₐ=2, nₛ=100; testing=true, tol=0.1)
+    nᵩ = 2
+    (gt_model, agents) = quick_setup(nᵩ; testing=testing, nₐ=nₐ)
 
-# @testset "Single Agent Estimators" begin
-#     test_estimators()
-# end
+    estimators = KFEstimators[] # array of pointers to agent estimators
+    # numerically iterate to ensure we can always match agent to array element
+    for j in eachindex(agents)
+        push!(estimators, agents[j].estimators)
+    end
 
-# @testset "H Observability" begin
-#     test_observability()
-# end
+    # estimators = KFEstimators[agents[j].estimators for j in eachindex(agents)]
+
+    # Arrays of fused information over time per agent (array of arrays)
+    fused_info = Any[[copy(agents[j].agent.information[1]) for j in eachindex(agents)]]
+
+    sz=(1,2) # or make it (1,2)
+    new_loc = [[0. 0.; -0.5 -0.5] + [0. 0.; j-1 j-1] for j in eachindex(agents)]
+    # new_loc = zeros(sz...)
+    for i in 1:nₛ
+        push!(fused_info,centralized_fusion(estimators, i))
+        push!(gt_model, update_SCRIBEModel(gt_model[i]))
+        # new_loc = 3*rand(sz...)
+        for j in eachindex(agents)
+            progress_agent_env_filter(agents[j].agent, fused_info[end][j], gt_model[i+1], copy(new_loc[j]))
+            push!(agents[j].history, agents[j].agent.estimates[i+1].observations.X)
+        end
+    end
+
+    fests = [(string(j), agents[j].agent.estimates[end].estimate.ϕ) for j in eachindex(agents)]
+    fvals = Dict([(:k, agents[1].agent.k), (:ϕ, gt_model[end].ϕ), fests...])
+
+    println("Results:")
+    println("k: ", fvals[:k], "\nϕ(t=final):  ", fvals[:ϕ])
+    for j in eachindex(agents)
+        println("ϕ_", j,"(t=final): ", fvals[string(j)])
+    end
+
+    return agents
+end
+
+@testset "Single Agent Setup" begin
+    test_agent_setup()
+end
+
+@testset "Single Agent Estimators" begin
+    test_estimators()
+end
 
 @testset "Centralized Kalman Filter" begin
-    test_centralized_KF()
+    single_agent_centralized_KF(100; tol=0.1)
+    mul_agent_centralized_KF(2, 100; tol=0.1)
 end
