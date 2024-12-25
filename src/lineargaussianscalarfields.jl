@@ -179,6 +179,7 @@ Returns:
 """
 function compute_obs_dynamics(smodel::LGSFModel, X::Matrix{Float64}; tol=0.001)
     let H=mapslices(smodel.ψ,X,dims=2)
+        return H, X # skip if statement because it's currently pointless
         if check_observability(H, tol)
             return H, X
         else
