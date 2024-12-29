@@ -44,6 +44,12 @@ function predict_SCRIBEModel(smodel::SCRIBEModel)
     error("`predict_SCRIBEModel` is not implemented for the abstract type SCRIBEModel. Please provide a specific implementation.")
 end
 
+"""Generic helper function for acquiring current model time.
+"""
+function get_model_time(smodel::SCRIBEModel)
+    error("`get_model_time` is not implemented for the abstract type SCRIBEModel. Please provide a specific implementation.")
+end
+
 """Abstract type that defines observer behavior.
 
 This can include:

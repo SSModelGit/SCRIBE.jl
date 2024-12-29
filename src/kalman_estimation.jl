@@ -116,7 +116,7 @@ mutable struct KFEnvScribe <: EnvScribe
 end
 
 function initialize_scribe(params::SCRIBEModelParameters, bhv::SCRIBEObserverBehavior, cwrld::SCRIBEModel, X₀::Matrix{Float64})
-    KFEnvScribe(1, cwrld.k-1, params, bhv, [init_agent_estimate(cwrld, 1, params, bhv, X₀)], [init_agent_info(params.nᵩ)])
+    KFEnvScribe(1, get_model_time(cwrld)-1, params, bhv, [init_agent_estimate(cwrld, 1, params, bhv, X₀)], [init_agent_info(params.nᵩ)])
 end
 
 """Adds new internal system estimate for t=k+1.

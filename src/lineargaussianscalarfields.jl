@@ -1,4 +1,4 @@
-export LGSFModelParameters, LGSFModel
+export LGSFModelParameters, LGSFModel, get_model_time
 export LGSFObserverBehavior, LGSFObserverState
 
 struct LGSFModelParameters <: SCRIBEModelParameters
@@ -129,6 +129,8 @@ function predict_SCRIBEModel(smodel::LGSFModel, x::Union{Vector{Float64}, Float6
     @assert k==smodel.k "Timestep of prediction does not match the model timestep"
     smodel.ψ(x)'⋅smodel.ϕ
 end
+
+get_model_time(smodel::LGSFModel) = smodel.k
 
 """Stores information about the observation process.
 
