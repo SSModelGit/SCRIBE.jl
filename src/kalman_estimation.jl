@@ -1,5 +1,4 @@
 using Combinatorics: combinations
-using Parameters: @unpack
 using Statistics: mean
 
 export KFEnvScribe, initialize_scribe, next_agent_state, next_agent_time, next_agent_info_state
