@@ -33,9 +33,9 @@ end
 function mul_agent_distrib_KF(nₐ=3, nₛ=100; testing=true, tol=0.1)
     agent_ids = ["agent1", "agent2", "agent3", "agent4", "agent5"][1:nₐ]
     if nₐ==3
-        agent_conns = Dict([("agent1", ["agent2", "agent3"]),
+        agent_conns = Dict([("agent1", ["agent2"]),
                             ("agent2", ["agent1", "agent3"]),
-                            ("agent3", ["agent1", "agent2"])])
+                            ("agent3", ["agent2"])])
     elseif nₐ==5
         agent_conns = Dict([("agent1", ["agent2", "agent3"]),
                             ("agent2", ["agent1", "agent3", "agent4"]),
@@ -49,43 +49,37 @@ function mul_agent_distrib_KF(nₐ=3, nₛ=100; testing=true, tol=0.1)
     (gt_model, ng) = quick_setup(agent_ids, agent_conns, nᵩ; testing=testing)
 
     # Arrays of fused information over time per agent (array of arrays)
-    fused_info = Dict([(aid, copy(ng.vertices[aid].agent.information[1])) for aid in agent_ids])
+    # fused_info = Dict([(aid, [copy(ng.vertices[aid].agent.information[1])]) for aid in agent_ids])
 
     sz=(1,2) # or make it (1,2)
-    new_loc = [[0. 0.; -0.5 -0.5] + [0. 0.; j-1 j-1] for j in eachindex(agent_ids)]
+    new_loc = Dict([(agent_ids[j], [0. 0.; -0.5 -0.5] + [0. 0.; j-1 j-1]) for j in eachindex(agent_ids)])
     # new_loc = zeros(sz...)
     for i in 1:nₛ
-        for aid in agent_ids; network_averaging_precheck(i, aid, ng); end
         while true
-            # ensure while loop breaks
-            if ng.vertices["agent1"].net_conn.outbox["lv"] > 1000
-                println("Convergence failed")
-                break
-            end
-
-            for aid in agent_ids; network_averaging_update(aid, ng); end
-
-            if all(map(aid->network_averaging_postcheck(aid, ng, 0.1), agent_ids)); break; end
+            if all(map(aid->distributed_fusion(i, aid, ng, 0.1, 360), agent_ids)); break; end
         end
 
-        for aid in agent_ids; push!(fused_info[aid], distributed_fusion(i, aid, ng)); end
+        for aid in agent_ids; full_reset_network_connector(ng.vertices[aid].net_conn); end
 
         push!(gt_model, update_SCRIBEModel(gt_model[i]))
         # new_loc = 3*rand(sz...)
         for aid in agent_ids
-            progress_agent_env_filter(ng.vertices[aid].agent, fused_info[aid][end], gt_model[i+1], copy(new_loc[j]))
+            # progress_agent_env_filter(ng.vertices[aid].agent, fused_info[aid][end], gt_model[i+1], copy(new_loc[aid]))
+            progress_agent_env_filter(ng.vertices[aid].agent, gt_model[i+1], copy(new_loc[aid]))
             push!(ng.vertices[aid].history, ng.vertices[aid].agent.estimates[i+1].observations.X)
         end
     end
 
-    fests = [(string(j), ng.vertices[aid].agent.estimates[end].estimate.ϕ) for aid in agent_ids]
+    fests = [(aid, ng.vertices[aid].agent.estimates[end].estimate.ϕ) for aid in agent_ids]
     fvals = Dict([(:k, ng.vertices["agent1"].agent.k), (:ϕ, gt_model[end].ϕ), fests...])
 
     println("Results:")
     println("k: ", fvals[:k], "\nϕ(t=final):  ", fvals[:ϕ])
-    for j in eachindex(agents)
-        println("ϕ_", j,"(t=final): ", fvals[string(j)])
+    for aid in agent_ids
+        println("ϕ_", aid,"(t=final): ", fvals[aid])
     end
 
     return ng
 end
+
+mul_agent_distrib_KF();

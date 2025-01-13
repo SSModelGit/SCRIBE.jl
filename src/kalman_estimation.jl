@@ -244,6 +244,8 @@ end
 """
 recover_estimate_from_info(info::KFEnvInfo) = inv(info.Y) * info.y
 
+recover_estimate_from_info(agent::KFEnvScribe, k::Integer) = recover_estimate_from_info(agent.information[k])
+
 """Consolidated update process given new fused information estimates y/Y(t=k+1)
 
 Also requires the new state of the world and the new sampling locations.
