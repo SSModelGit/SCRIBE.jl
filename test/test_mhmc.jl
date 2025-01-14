@@ -1,6 +1,9 @@
 using Test
 using SCRIBE
-using LinearAlgebra: I
+using Plots: heatmap, plot, savefig
+
+using JLD2: @save, @load
+using LinearAlgebra: I, norm
 
 """Rapid-fire (potentially homogeneous multi-agent) setup.
 
@@ -9,8 +12,10 @@ All agents will start at [0. 0.].
 """
 function quick_setup(agent_ids, agent_conns, nᵩ; testing=true)
     ϕ₀ = (nᵩ==2) ? [-0.5,0.5] : [-0.5,0.5,0.75,0.5,-0.5]
+    δ_w = 0.001
 
-    gt_params=LGSFModelParameters(μ=hcat(range(-1,1,nᵩ), zeros(nᵩ)),σ=[1.],τ=[1.],ϕ₀=ϕ₀,A=nothing,
+    gt_params=LGSFModelParameters(μ=hcat(range(-1,1,nᵩ), zeros(nᵩ)),σ=[1.],τ=[1.],ϕ₀=ϕ₀,
+                                  A=[1-δ_w 0.; 0. 1-δ_w],
                                   Q=0.000001*Matrix{Float64}(I(nᵩ)))
     gt_model=[initialize_SCRIBEModel_from_parameters(gt_params)]
 
@@ -30,7 +35,7 @@ function quick_setup(agent_ids, agent_conns, nᵩ; testing=true)
     return gt_model, ng
 end
 
-function mul_agent_distrib_KF(nₐ=3, nₛ=100; testing=true, tol=0.1)
+function mul_agent_distrib_KF(run_name::String, nₐ=3, nₛ=100; testing=true, tol=0.1)
     agent_ids = ["agent1", "agent2", "agent3", "agent4", "agent5"][1:nₐ]
     if nₐ==3
         agent_conns = Dict([("agent1", ["agent2"]),
@@ -55,8 +60,12 @@ function mul_agent_distrib_KF(nₐ=3, nₛ=100; testing=true, tol=0.1)
     new_loc = Dict([(agent_ids[j], [0. 0.; -0.5 -0.5] + [0. 0.; j-1 j-1]) for j in eachindex(agent_ids)])
     # new_loc = zeros(sz...)
     for i in 1:nₛ
+        print("k: ", i)
         while true
-            if all(map(aid->distributed_fusion(i, aid, ng, 0.1, 360), agent_ids)); break; end
+            if all(map(aid->distributed_fusion(i, aid, ng, 0.1, 360), agent_ids))
+                print(" ...convergence reached:: ")
+                break
+            end
         end
 
         for aid in agent_ids; full_reset_network_connector(ng.vertices[aid].net_conn); end
@@ -68,18 +77,63 @@ function mul_agent_distrib_KF(nₐ=3, nₛ=100; testing=true, tol=0.1)
             progress_agent_env_filter(ng.vertices[aid].agent, gt_model[i+1], copy(new_loc[aid]))
             push!(ng.vertices[aid].history, ng.vertices[aid].agent.estimates[i+1].observations.X)
         end
+        println("ϕ: ", gt_model[end].ϕ, " | ̂ϕ: ", ng.vertices["agent1"].agent.estimates[end].estimate.ϕ)
     end
 
-    fests = [(aid, ng.vertices[aid].agent.estimates[end].estimate.ϕ) for aid in agent_ids]
-    fvals = Dict([(:k, ng.vertices["agent1"].agent.k), (:ϕ, gt_model[end].ϕ), fests...])
+    # fests_m = [(aid*"m", ng.vertices[aid].agent.estimates[end].estimate.ϕ) for aid in agent_ids]
+    # fests_v = [(aid*"v", inv(ng.vertices[aid].agent.information[end].Y)) for aid in agent_ids]
+    # fvals = Dict([(:k, ng.vertices["agent1"].agent.k), (:ϕ, gt_model[end].ϕ), fests_m..., fests_v...])
+
+    # println("Results:")
+    # println("k: ", fvals[:k], "\nϕ(t=final):  ", fvals[:ϕ])
+    # for aid in agent_ids
+    #     println("ϕ_", aid,"(t=final): ", fvals[aid*"m"]," | P_"*aid*"(t_final): ", fvals*"v")
+    # end
+
+    simple_print_results(gt_model, ng)
+
+    @save "test/"*run_name*".jld2" gt_model ng
+    return gt_model, ng
+end
+
+function simple_print_results(gt_model::Vector{T} where T<:SCRIBEModel, ng::NetworkGraph)
+    agent_ids = collect(keys(ng.vertices))
+
+    fests_m = [(aid*"m", ng.vertices[aid].agent.estimates[end].estimate.ϕ) for aid in agent_ids]
+    fests_v = [(aid*"v", inv(ng.vertices[aid].agent.information[end].Y)) for aid in agent_ids]
+    fvals = Dict([(:k, ng.vertices["agent1"].agent.k), (:ϕ, gt_model[end].ϕ), fests_m..., fests_v...])
 
     println("Results:")
     println("k: ", fvals[:k], "\nϕ(t=final):  ", fvals[:ϕ])
     for aid in agent_ids
-        println("ϕ_", aid,"(t=final): ", fvals[aid])
+        println("ϕ_", aid,"(t=final): ", fvals[aid*"m"]," | P_"*aid*"(t_final): ", fvals[aid*"v"])
     end
+end
 
-    return ng
+function error_map_plots(run_name::String)
+    @load "test/"*run_name*".jld2" gt ng
+
+    x_range = -2:0.1:2
+    y_range = -2:0.1:2
+
+    let gt = gt[end], ag1_mod = ng.vertices["agent1"].agent.estimates[end].estimate,
+        png_name = "test/res_plots/"*run_name*"_err_map_agent1.png"
+        error_agent1(x::Vector) = norm(predict_SCRIBEModel(gt, x) - predict_SCRIBEModel(ag1_mod, x))
+
+        gt_map_vals = [predict_SCRIBEModel(gt, [x,y]) for y in y_range, x in x_range]
+        err1_map_vals = [error_agent1([x,y]) for y in y_range, x in x_range]
+
+        gt_map = heatmap(x_range, y_range, gt_map_vals,
+                         color=:viridis, xlabel="X", ylabel="Y",
+                         title="Ground truth distribution of phenomena intensity")
+        err1_map = heatmap(x_range, y_range, err1_map_vals,
+                         color=:viridis, xlabel="X", ylabel="Y",
+                         title="Error distribution of \nagent 1's predictions of phenomena intensity")
+        
+        plot(gt_map, err1_map, layout=(2,1), size=(600,800));
+        savefig(png_name);
+        println("Plot saved at "*png_name)
+    end
 end
 
 # mul_agent_distrib_KF();

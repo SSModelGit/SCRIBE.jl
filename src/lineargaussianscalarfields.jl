@@ -125,8 +125,12 @@ This is for model estimates. This requires explicit ϕ declarations.
 update_SCRIBEModel(smodel::LGSFModel, ϕₖ) = LGSFModel(smodel.k+1, smodel.params, smodel.ψ,
                                                       ϕₖ, rand(smodel.params.w[:w_dist]))
 
-function predict_SCRIBEModel(smodel::LGSFModel, x::Union{Vector{Float64}, Float64}, k::Integer)
-    @assert k==smodel.k "Timestep of prediction does not match the model timestep"
+# function predict_SCRIBEModel(smodel::LGSFModel, x::Union{Vector{Float64}, Float64}, k::Integer)
+#     @assert k==smodel.k "Timestep of prediction does not match the model timestep"
+#     smodel.ψ(x)'⋅smodel.ϕ
+# end
+
+function predict_SCRIBEModel(smodel::LGSFModel, x::Union{Vector{Float64}, Float64})
     smodel.ψ(x)'⋅smodel.ϕ
 end
 
