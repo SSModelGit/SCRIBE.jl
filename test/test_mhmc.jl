@@ -95,14 +95,9 @@ function mul_agent_distrib_KF(run_name::String, nₐ=3, nₛ=100; testing=true, 
     nᵩ = 2
     (gt_model, ng) = quick_setup(agent_ids, agent_conns, nᵩ; testing=testing)
 
-    # Arrays of fused information over time per agent (array of arrays)
-    # fused_info = Dict([(aid, [copy(ng.vertices[aid].agent.information[1])]) for aid in agent_ids])
-
-    # sz=(1,2) # or make it (1,2)
-    # new_loc = Dict([(agent_ids[j], [0. 0.; -0.5 -0.5] + [0. 0.; j-1 j-1]) for j in eachindex(agent_ids)])
     agent_wpts = generate_agent_wpts(agent_ids, space_corners)
     sample_dists = (space_corners[2] - space_corners[1])/20 # ensure distance is small enough for lawnmower pattern
-    # new_loc = zeros(sz...)
+
     for i in 1:nₛ
         print("k: ", i)
         while true
@@ -115,25 +110,13 @@ function mul_agent_distrib_KF(run_name::String, nₐ=3, nₛ=100; testing=true, 
         for aid in agent_ids; full_reset_network_connector(ng.vertices[aid].net_conn); end
 
         push!(gt_model, update_SCRIBEModel(gt_model[i]))
-        # new_loc = 3*rand(sz...)
         for aid in agent_ids
-            # progress_agent_env_filter(ng.vertices[aid].agent, fused_info[aid][end], gt_model[i+1], copy(new_loc[aid]))
             progress_agent_env_filter(ng.vertices[aid].agent, gt_model[i+1],
                                       copy(generate_sample_locs_from_wpts(agent_wpts[aid], i, sample_dists)))
             push!(ng.vertices[aid].history, ng.vertices[aid].agent.estimates[i+1].observations.X)
         end
         println("ϕ: ", gt_model[end].ϕ, " | ̂ϕ: ", ng.vertices["agent1"].agent.estimates[end].estimate.ϕ)
     end
-
-    # fests_m = [(aid*"m", ng.vertices[aid].agent.estimates[end].estimate.ϕ) for aid in agent_ids]
-    # fests_v = [(aid*"v", inv(ng.vertices[aid].agent.information[end].Y)) for aid in agent_ids]
-    # fvals = Dict([(:k, ng.vertices["agent1"].agent.k), (:ϕ, gt_model[end].ϕ), fests_m..., fests_v...])
-
-    # println("Results:")
-    # println("k: ", fvals[:k], "\nϕ(t=final):  ", fvals[:ϕ])
-    # for aid in agent_ids
-    #     println("ϕ_", aid,"(t=final): ", fvals[aid*"m"]," | P_"*aid*"(t_final): ", fvals*"v")
-    # end
 
     simple_print_results(gt_model, ng)
 
@@ -178,9 +161,6 @@ function frechet_dist_eval_plot(run_name::String; layout_size=(800,500))
     for aid in agent_ids
         plot!(p2, 1:length(gt_model), frechet_dists[aid], label="Agent "*aid[end], lw=2, yrange=[0., 1.0])
     end
-    # xlabel!(p2, "Time (in discretized steps)")
-    # ylabel!(p2, "(pseudo-)Frechet distance, zoomed in")
-    # title!(p2, "Performance of agent learned environment models \ncompared to ground truth over time")
 
     plot(p1, p2, layout=(1,2), size=(layout_size[1]*2, layout_size[2]))
     savefig(png_name);
