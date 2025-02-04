@@ -22,7 +22,8 @@ function quick_setup(agent_ids, agent_conns;
 end
 
 function create_grid_gsf_μστ(space_corners=[-5., 5], well_spacing=0.5; τ=1.0, σ=0.5)
-    μ=reduce(vcat, transpose.(collect(combinations(space_corners[1]:well_spacing:space_corners[2]))))
+    span = space_corners[1]:well_spacing:space_corners[2]
+    μ = reduce(vcat, transpose.(map(collect, reshape(collect(Iterators.product(span, span)), :, 1))))
     return [(:gt_same, false), (:σ, 1.), (:τ, 1.), (:μ, μ), (:nᵩ, size(μ,1))]
 end
 
@@ -133,11 +134,11 @@ function comm_conns(ng, agent_ids, conn_dist, i; comm_type=:dist)
     end
 end
 
-function single_run(run_name::String, gt_desc::Dict, ag_desc::Dict;
+function single_run(run_name::String, gt_desc::Tuple, ag_desc::Dict;
                     nₛ=100, space_corners = [-5., 5.], conn_dist=10, comm_type=:dist)
     nₐ = ag_desc[:nₐ]
 
-    agent_ids = ["agent"*i for i in 1:nₐ]
+    agent_ids = ["agent"*string(i) for i in 1:nₐ]
     agent_conns = @match nₐ begin
         2 => Dict([("agent1", ["agent2"]),
                    ("agent2", ["agent1"])])
@@ -185,7 +186,7 @@ function single_run(run_name::String, gt_desc::Dict, ag_desc::Dict;
         println("ϕ: ", gt_model[end].ϕ, " | ̂ϕ: ", ng.vertices["agent1"].agent.estimates[end].estimate.ϕ)
     end
 
-    simple_print_results(gt_model, ng)
+    # simple_print_results(gt_model, ng)
 
     @save "test/res_data/"*run_name*".jld2" gt_model ng
     return gt_model, ng, space_corners
@@ -292,6 +293,26 @@ function error_map_plots(run_name::String; layout_size=(2700,1500), mode=:tane)
     println("Plot saved at "*png_name)
 end
 
+function make_run_name(gtd, ad, obn, anum, ctype, nₛ; state_run_parameters=true)
+    run_name = string(anum)*"a_"*string(ad[:nᵩ])*"w_"*gtd[3]*"GT_"*string(ctype)*"c_"*obn[2]*"o_"*string(nₛ)*"s_lawnmower"
+    if state_run_parameters
+        println("================================================")
+        println("Starting new run...")
+        println("Paramters::")
+        println("Ground model type: ", gtd[1], " | Environment character: ", gtd[3])
+        println("Number of agents: ", anum)
+        println("Number of wells in environment approximation: ", ad[:nᵩ])
+        println("Agent communication model: ", ctype)
+        println("Observation noise process character: ", obn[2])
+        println("Number of samples: ", nₛ)
+        println("------------------------------------------------")
+        println("Run named: ", run_name)
+        println("Agents will follow a lawnmower pattern.")
+        println("Commencing run...")
+    end
+    return run_name
+end
+
 function run_scriptor()
     gt_descs = [(:gsf, Dict([(:nᵩ, 3), (:τ, 1.), (:σ, 1.)]), "full"),
                 (:gsf, Dict([(:nᵩ, 3), (:τ, 0.5), (:σ, 1.)]), "weak"),
@@ -299,9 +320,9 @@ function run_scriptor()
     ag_desc = [[(:gt_same, true), (:σ, 1.), (:τ, 1.), (:μ, [-0.5 0; 0. 0.; 0.5 0.]), (:nᵩ, 3)],
                create_grid_gsf_μστ([-5., 5], 0.5; τ=1.0, σ=0.5)]
 
-    anums = 2:5
+    anums = 3:5
     comm_types = [:none, :dist]
-    num_samples = 25:25:100
+    num_samples = 10:10:30
     obs_noises = [(0.01, "low"), (0.05, "med"), (0.1, "high")]
 
     for gtd in gt_descs
@@ -310,10 +331,10 @@ function run_scriptor()
                 for anum in anums
                     for ctype in comm_types
                         for nₛ in num_samples
-                            ad = Dict(vcat(agd, ((:nₐ, anum), (:oₙ, obn[1]))))
-                            run_name = anum*"a_"*agd[]*"w_"*gtd[3]*"GT_"*string(ctype)*"c_"*obn[2]*"o_"*string(nₛ)*"s_lawnmower"
+                            ad = Dict(reduce(vcat, [agd, (:nₐ, anum), (:oₙ, obn[1])]))
+                            run_name = make_run_name(gtd, ad, obn, anum, ctype, nₛ)
                             single_run(run_name, gtd, ad; nₛ=nₛ, space_corners = [-5., 5.], conn_dist=10, comm_type=ctype)
-                            error_map_plots(run_name)
+                            # error_map_plots(run_name)
                         end
                     end
                 end
