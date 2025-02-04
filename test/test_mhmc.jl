@@ -20,7 +20,7 @@ function quick_setup(agent_ids, agent_conns, nᵩ; testing=true)
     end
     δ_w = 0.001 # represents temporal system dynamics (shift from A=identity)
 
-    gt_params=LGSFModelParameters(μ=μ,σ=[1.],τ=[1.],ϕ₀=ϕ₀,
+    gt_params=LGSFModelParameters(μ=μ,σ=[0.5],τ=[1.],ϕ₀=ϕ₀,
                                   A=Matrix{Float64}(I(nᵩ) .* (1- δ_w)),
                                   Q=0.000001*Matrix{Float64}(I(nᵩ)))
     gt_model=[initialize_SCRIBEModel_from_parameters(gt_params)]
@@ -29,7 +29,7 @@ function quick_setup(agent_ids, agent_conns, nᵩ; testing=true)
     a = 0
     for aid in agent_ids
         a += 1
-        ag_params=LGSFModelParameters(μ=μ,σ=[1.],τ=[1.],
+        ag_params=LGSFModelParameters(μ=μ,σ=[0.5],τ=[1.],
                                       ϕ₀=zeros(nᵩ), A=Matrix{Float64}(I(nᵩ)),
                                       Q=0.0001*Matrix{Float64}(I(nᵩ)))
         observer=LGSFObserverBehavior(0.01)
@@ -152,7 +152,7 @@ function no_comm_conns(ng, agent_ids)
 end
 
 
-function mul_agent_poor_conn(run_name::String, nₐ=3, nₛ=100; testing=true, tol=0.1, conn_dist=5, comm_type=:dist)
+function mul_agent_poor_conn(run_name::String, nₐ=3, nₛ=100; testing=true, tol=0.1, conn_dist=10, comm_type=:dist)
     space_corners = [-5., 5.] # corner coordinates
 
     agent_ids = ["agent1", "agent2", "agent3", "agent4", "agent5"][1:nₐ]
@@ -250,7 +250,14 @@ function frechet_dist_eval_plot(run_name::String; layout_size=(800,500))
     println("Plot saved at "*png_name)
 end
 
-function error_map_plots(run_name::String; layout_size=(1200,1000))
+function error_mapf(gt::SCRIBEModel, m::SCRIBEModel, x::Vector; mode=:norm)
+    @match mode begin
+        :norm => norm(predict_SCRIBEModel(gt, x) - predict_SCRIBEModel(m, x))
+        :tane => abs(2*atan(predict_SCRIBEModel(gt, x) / predict_SCRIBEModel(m, x)) - π/2)/(π/2)
+    end
+end
+
+function error_map_plots(run_name::String; layout_size=(1200,1000), mode=:tane)
     png_name = "test/res_plots/"*run_name*"_err_map.png"
 
     @load "test/res_data/"*run_name*".jld2" gt_model ng
@@ -264,17 +271,18 @@ function error_map_plots(run_name::String; layout_size=(1200,1000))
     y_range = copy(x_range)
     gt_map = heatmap(x_range, y_range, [predict_SCRIBEModel(gt, [x,y]) for y in y_range, x in x_range],
                      color=:viridis, xlabel="X", ylabel="Y",
-                     title="\nGround truth distribution of phenomena intensity")
+                     title="\nGround truth distribution of phenomena intensity",
+                     c = :thermal)
 
-    error_mapf(m, x) = norm(predict_SCRIBEModel(gt, x) - predict_SCRIBEModel(m, x))
     error_maps = Dict{String, Any}()
     error_mapv = Any[gt_map]
 
     for aid in keys(ng.vertices)
         let m = ng.vertices[aid].agent.estimates[end].estimate, h=reduce(vcat, ng.vertices[aid].history)
-            error_maps[aid] = heatmap(x_range, y_range, [error_mapf(m, [x,y]) for y in y_range, x in x_range],
+            error_maps[aid] = heatmap(x_range, y_range, [error_mapf(gt, m, [x,y]; mode=mode) for y in y_range, x in x_range],
                                       color=:viridis, xlabel="X", ylabel="Y",
-                                      title="Error distribution of \nAgent "*aid[end]*"'s predictions of phenomena intensity")
+                                      title="Error distribution of \nAgent "*aid[end]*"'s predictions of phenomena intensity",
+                                      c = :berlin)
             plot!(error_maps[aid], copy(h[:,1]), copy(h[:,2]),
                   linestyle=:dash, marker=:xcross, linecolor=:red, label="Sampling path and sites")
             push!(error_mapv, error_maps[aid])
