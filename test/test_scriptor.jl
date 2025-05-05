@@ -15,9 +15,10 @@ All agents will start at [0. 0.].
 """
 function quick_setup(agent_ids, agent_conns;
                      gt_desc=(:gsf, Dict([(:nᵩ, 3), (:τ, 1.), (:σ, 1.)])),
-                     ag_desc = Dict([(:gt_same, true), (:σ, 1.), (:τ, 1.), (:μ, [-0.5 0; 0. 0.; 0.5 0.]), (:nᵩ, 3)]))
+                     ag_desc = Dict([(:gt_same, true), (:σ, 1.), (:τ, 1.), (:μ, [-0.5 0; 0. 0.; 0.5 0.]), (:nᵩ, 3)]),
+                     agent_wpts = Dict())
     @match gt_desc[1] begin
-        :gsf => return quick_GSF(agent_ids, agent_conns, gt_desc[2]; ag_desc = ag_desc)
+        :gsf => return quick_GSF(agent_ids, agent_conns, gt_desc[2]; ag_desc = ag_desc, agent_wpts)
     end
 end
 
@@ -28,7 +29,8 @@ function create_grid_gsf_μστ(space_corners=[-5., 5], well_spacing=0.5; τ=1.0
 end
 
 function quick_GSF(agent_ids, agent_conns, gt_desc=Dict([(:nᵩ, 3), (:τ, 1.), (:σ, 1.)]);
-                   ag_desc=Dict([(:gt_same, true), (:σ, 1.), (:τ, 1.), (:μ, [-0.5 0; 0. 0.; 0.5 0.]), (:nᵩ, 3)]))
+                   ag_desc=Dict([(:gt_same, true), (:σ, 1.), (:τ, 1.), (:μ, [-0.5 0; 0. 0.; 0.5 0.]), (:nᵩ, 3)]),
+                   agent_wpts=Dict())
     nᵩ = gt_desc[:nᵩ]
     σ = gt_desc[:σ]
     τ = gt_desc[:τ]
@@ -58,7 +60,8 @@ function quick_GSF(agent_ids, agent_conns, gt_desc=Dict([(:nᵩ, 3), (:τ, 1.), 
                                       ϕ₀=zeros(nᵩ), A=Matrix{Float64}(I(nᵩ)),
                                       Q=0.0001*Matrix{Float64}(I(nᵩ)))
         observer=LGSFObserverBehavior(ag_desc[:oₙ])
-        init_agent_loc=[0. 0.; -0.5 -0.5] + [0. 0.; a-1 a-1]
+        init_agent_loc = generate_sample_locs_from_wpts(agent_wpts[aid], 1, 1., size(ag_desc[:μ], 1)) # use some random value for sample distance for now
+        # init_agent_loc=[0. 0.; -0.5 -0.5] + [0. 0.; a-1 a-1]
         lg_Fs = initialize_KF(ag_params, observer, copy(init_agent_loc), gt_model[1])
         ng.vertices[aid] = initialize_agent(aid, lg_Fs, ng)
     end
@@ -92,7 +95,7 @@ function generate_agent_wpts(agent_ids, corners = [-5.,5.])
     agent_coords
 end
 
-function generate_sample_locs_from_wpts(wpts::Vector, k::Integer, d::Float64,)
+function generate_sample_locs_from_wpts(wpts::Vector, k::Integer, d::Float64, μₙ::Integer)
     let l = length(wpts), start = wpts[(k-1)%l+1], stop = wpts[k%l+1],
         d1 = abs(stop[1] - start[1])/d, d2 = abs(stop[2] - start[2])/d
         if d1 >= d2
@@ -100,6 +103,7 @@ function generate_sample_locs_from_wpts(wpts::Vector, k::Integer, d::Float64,)
         else
             nₛ = max(Integer(round(d2)), 2)
         end
+        nₛ = max(nₛ, μₙ+1) # max against the number of environmental wells
         # println("\nstart: ", start, " | stop: ", stop, " || d1: ", d1, " | d2: ", d2, " | nₛ: ", nₛ)
         hcat(range(start[1], stop[1], length=nₛ+1),
              range(start[2], stop[2], length=nₛ+1))
@@ -137,6 +141,7 @@ end
 function single_run(run_name::String, gt_desc::Tuple, ag_desc::Dict;
                     nₛ=100, space_corners = [-5., 5.], conn_dist=10, comm_type=:dist)
     nₐ = ag_desc[:nₐ]
+    μₙ = size(ag_desc[:μ], 1)
 
     agent_ids = ["agent"*string(i) for i in 1:nₐ]
     agent_conns = @match nₐ begin
@@ -156,11 +161,11 @@ function single_run(run_name::String, gt_desc::Tuple, ag_desc::Dict;
                    ("agent5", ["agent4"])])
     end
     if nₐ==3
-        return "Wrong number of agents champ."
+        println("Wrong number of agents champ.")
     end
-    (gt_model, ng) = quick_setup(agent_ids, agent_conns; gt_desc=gt_desc, ag_desc=ag_desc)
-
     agent_wpts = generate_agent_wpts(agent_ids, space_corners)
+    (gt_model, ng) = quick_setup(agent_ids, agent_conns; gt_desc=gt_desc, ag_desc=ag_desc, agent_wpts)
+
     sample_dists = (space_corners[2] - space_corners[1])/20 # ensure distance is small enough for lawnmower pattern
 
     for i in 1:nₛ
@@ -180,7 +185,7 @@ function single_run(run_name::String, gt_desc::Tuple, ag_desc::Dict;
         push!(gt_model, update_SCRIBEModel(gt_model[i]))
         for aid in agent_ids
             progress_agent_env_filter(ng.vertices[aid].agent, gt_model[i+1],
-                                      copy(generate_sample_locs_from_wpts(agent_wpts[aid], i, sample_dists)))
+                                      copy(generate_sample_locs_from_wpts(agent_wpts[aid], i+1, sample_dists, μₙ)))
             push!(ng.vertices[aid].history, ng.vertices[aid].agent.estimates[i+1].observations.X)
         end
         println("ϕ: ", gt_model[end].ϕ, " | ̂ϕ: ", ng.vertices["agent1"].agent.estimates[end].estimate.ϕ)
@@ -188,7 +193,7 @@ function single_run(run_name::String, gt_desc::Tuple, ag_desc::Dict;
 
     # simple_print_results(gt_model, ng)
 
-    @save "test/res_data/"*run_name*".jld2" gt_model ng
+    @save "test/res_data/"*run_name*".jld2" gt_model ng space_corners
     return gt_model, ng, space_corners
 end
 
@@ -228,7 +233,7 @@ function error_mapf(gt::SCRIBEModel, m::SCRIBEModel, x::Vector; mode=:norm)
     end
 end
 
-function error_map_plots(run_name::String; layout_size=(2700,1500), mode=:tane)
+function error_map_plots(run_name::String; layout_size=(2700,1500), mode=:norm)
     png_name = "test/res_plots/"*run_name*"_err_map.png"
 
     @load "test/res_data/"*run_name*".jld2" gt_model ng space_corners
@@ -318,7 +323,7 @@ function run_scriptor()
                 (:gsf, Dict([(:nᵩ, 3), (:τ, 0.5), (:σ, 1.)]), "weak"),
                 (:gsf, Dict([(:nᵩ, 3), (:τ, 1.), (:σ, 0.5)]), "small")]
     ag_desc = [[(:gt_same, true), (:σ, 1.), (:τ, 1.), (:μ, [-0.5 0; 0. 0.; 0.5 0.]), (:nᵩ, 3)],
-               create_grid_gsf_μστ([-5., 5], 0.5; τ=1.0, σ=0.5)]
+               create_grid_gsf_μστ([-5., 5], 1.0; τ=1.0, σ=0.5)]
 
     anums = 3:5
     comm_types = [:none, :dist]
@@ -332,9 +337,13 @@ function run_scriptor()
                     for ctype in comm_types
                         for nₛ in num_samples
                             ad = Dict(reduce(vcat, [agd, (:nₐ, anum), (:oₙ, obn[1])]))
-                            run_name = make_run_name(gtd, ad, obn, anum, ctype, nₛ)
-                            single_run(run_name, gtd, ad; nₛ=nₛ, space_corners = [-5., 5.], conn_dist=10, comm_type=ctype)
-                            # error_map_plots(run_name)
+                            run_name = make_run_name(gtd, ad, obn, anum, ctype, nₛ; state_run_parameters=false)
+                            if size(ad[:μ], 1) > 10
+                                println("Commencing run: ", run_name)
+                                single_run(run_name, gtd, ad; nₛ=nₛ, space_corners = [-5., 5.], conn_dist=10, comm_type=ctype)
+                                println("Plotting run: ", run_name)
+                                error_map_plots(run_name)
+                            end
                         end
                     end
                 end

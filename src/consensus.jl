@@ -46,8 +46,8 @@ function network_postcheck(nc::NetworkConnector, threshold::Float64; agent_id=no
 end
 
 function network_prior_update(nc::NetworkConnector, ng::NetworkGraph)
-    (cYᵢ, cyᵢ) = nc.outbox["lc"]
-    cYyⱼ = Dict([(nb, ng.vertices[nb].net_conn.outbox["lc"]) for nb in nc.neighbors])
+    (cYᵢ, cyᵢ) = copy.(nc.outbox["lc"])
+    cYyⱼ = Dict([(nb, copy.(ng.vertices[nb].net_conn.outbox["lc"])) for nb in nc.neighbors])
 
     sY = [cYᵢ, [Y[1] for Y in values(cYyⱼ)]...]
     sYinv = [inv(Y) for Y in sY]
@@ -66,8 +66,8 @@ function network_prior_update(nc::NetworkConnector, ng::NetworkGraph)
 end
 
 function network_averaging_update(nc::NetworkConnector, ng::NetworkGraph)
-    xᵢ = nc.outbox["lc"]
-    xⱼ = Dict([(nb, ng.vertices[nb].net_conn.outbox["lc"]) for nb in nc.neighbors])
+    xᵢ = copy.(nc.outbox["lc"])
+    xⱼ = Dict([(nb, copy.(ng.vertices[nb].net_conn.outbox["lc"])) for nb in nc.neighbors])
 
     # acquire differential updates from neighbors
     deg = size(nc.neighbors, 1)
@@ -102,7 +102,7 @@ function distributed_fusion(k::Integer, agent_id::String, ng::NetworkGraph, thre
             # TODO: come up with better convergence conditions
             cvc = network_postcheck(net_conn, threshold) # network_postcheck(net_conn, threshold; agent_id) # debugging mode
             if net_conn.outbox["lv"] > timeline
-                net_conn.outbox["prior"] = net_conn.outbox["lc"]
+                net_conn.outbox["prior"] = copy.(net_conn.outbox["lc"])
                 reset_consensus_count(net_conn)
             end
             return false

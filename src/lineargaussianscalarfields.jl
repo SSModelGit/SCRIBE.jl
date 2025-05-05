@@ -205,7 +205,7 @@ function scribe_observations(X::Matrix{Float64}, smodel::LGSFModel, o_b::LGSFObs
     let nₛ=size(X,1), v_s=o_b.v_s, R=v_s[:σ]*I(nₛ)
         v=Dict(:R=>R, :k=>rand(Gaussian(zeros(nₛ), R)))
         (H, X)=compute_obs_dynamics(smodel, X)
-        z=muladd(H,smodel.ϕ,v[:k])
+        z=muladd(H,smodel.ϕ,v[:k]).+1.
         LGSFObserverState(smodel.k, nₛ, X, H, v, z)
     end
 end
