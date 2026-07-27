@@ -1,7 +1,7 @@
 using Combinatorics: combinations
 using Statistics: mean
 
-export KFEnvScribe, initialize_scribe, next_agent_state, next_agent_time, next_agent_info_state
+export KFEnvInfo, KFEnvScribe, initialize_scribe, next_agent_state, next_agent_time, next_agent_info_state
 export KFEstimators, initialize_estimators, compute_info_priors, compute_innov_from_obs
 export centralized_fusion, recover_estimate_from_info, progress_agent_env_filter, initialize_KF
 
@@ -60,16 +60,24 @@ struct KFEnvInfo
 end
 
 
-"""Initial information associated per agent.
+"""Construct a finite, positive-definite initial information state.
 
-There is no information about the agent state, so all set to zero.
-
-This initial innovation state is not truly an "innovation state", but a meaningless prior.
-So, this is arbitrarily set to zero. This is described further in the docstring for KFEnvInfo.
+`prior_covariance` defaults to a weak prior of `1e3I`. Observations are deliberately
+excluded here: the observation at `k=1` is incorporated exactly once by the first
+filter update.
 """
-function init_agent_info(nᵩ::Integer)
-    # KFEnvInfo(zeros(nᵩ), zeros(nᵩ,nᵩ), zeros(nᵩ), zeros(nᵩ,nᵩ))
-    KFEnvInfo(ones(nᵩ).*eps(), Matrix{Float64}(I(nᵩ).*eps()), zeros(nᵩ), zeros(nᵩ,nᵩ))
+function init_agent_info(params::SCRIBEModelParameters;
+                         prior_covariance::Union{Nothing, AbstractMatrix{<:Real}}=nothing)
+    nᵩ = params.nᵩ
+    P₀ = isnothing(prior_covariance) ?
+         1e3 * Matrix{Float64}(I, nᵩ, nᵩ) :
+         Matrix{Float64}(prior_covariance)
+    @assert size(P₀) == (nᵩ, nᵩ) "Initial covariance must be $(nᵩ)×$(nᵩ)."
+    P₀ = Matrix(Symmetric((P₀ + P₀') / 2))
+    P₀_factor = cholesky(Symmetric(P₀); check=true)
+    Y₀ = Matrix(P₀_factor \ Matrix{Float64}(I, nᵩ, nᵩ))
+    y₀ = Y₀ * params.ϕ₀
+    KFEnvInfo(y₀, Y₀, zeros(nᵩ), zeros(nᵩ, nᵩ))
 end
 
 """Specializing the `copy` function for KFEnvInfo.
@@ -114,8 +122,14 @@ mutable struct KFEnvScribe <: EnvScribe
                 information::Vector{KFEnvInfo}) = new(k, cwrld_sync, params, bhv, estimates, information)
 end
 
-function initialize_scribe(params::SCRIBEModelParameters, bhv::SCRIBEObserverBehavior, cwrld::SCRIBEModel, X₀::Matrix{Float64})
-    KFEnvScribe(1, get_model_time(cwrld)-1, params, bhv, [init_agent_estimate(cwrld, 1, params, bhv, X₀)], [init_agent_info(params.nᵩ)])
+function initialize_scribe(params::SCRIBEModelParameters, bhv::SCRIBEObserverBehavior,
+                           cwrld::SCRIBEModel, X₀::Matrix{Float64};
+                           prior_covariance::Union{Nothing, AbstractMatrix{<:Real}}=nothing)
+    let k=1, cwrld_sync=get_model_time(cwrld)-1, params=params, bhv=bhv
+        estimates = [init_agent_estimate(cwrld, 1, params, bhv, X₀)]
+        information = [init_agent_info(params; prior_covariance)]
+        KFEnvScribe(k, cwrld_sync, params, bhv, estimates, information)
+    end
 end
 
 """Adds new internal system estimate for t=k+1.
@@ -182,25 +196,19 @@ Takes two inputs:
 * The **current** timestep `k`. It will use this along `Ef` to lookup corresponding system information.
 """
 function compute_info_priors(Ef::KFEstimators, k::Integer)
-    # @unpack _, A, _, Q, H, _, _, Y, y = Ef
     @unpack A, Q, Y, y = Ef
-    let A=A(k), Y=Y(k), Yinv=inv(Y), Q=Q(k), y=y(k)
-        Y⁻ = inv(A * Yinv * A' + Q)
-        y⁻ = Y⁻ * A * Yinv * y
+    let A=A(k), Y=Matrix(Symmetric((Y(k) + Y(k)') / 2)), Q=Q(k), y=y(k)
+        Y_factor = cholesky(Symmetric(Y); check=true)
+        P = Matrix(Y_factor \ Matrix{Float64}(I, size(Y)...))
+        ϕ = Y_factor \ y
+        P_predicted = A * P * A' + Q
+        P⁻ = Matrix(Symmetric((P_predicted + P_predicted') / 2))
+        P⁻_factor = cholesky(Symmetric(P⁻); check=true)
+        Y⁻ = Matrix(P⁻_factor \ Matrix{Float64}(I, size(P⁻)...))
+        y⁻ = Y⁻ * A * ϕ
         return Y⁻, y⁻
     end
 end
-
-# function compute_info_priors(Ef::KFEstimators, k::Integer)
-#     # @unpack _, A, _, Q, H, _, _, Y, y = Ef
-#     @unpack A, Q, Y, y = Ef
-#     let A=A(k), Y=Y(k), Q=Q(k), y=y(k)
-#         M  = inv(A)' * Y * inv(A)
-#         Y⁻ = M - M * inv(M + inv(Q)) * M
-#         y⁻ = Y⁻ * A * inv(Y) * y
-#         return Y⁻, y⁻
-#     end
-# end
 
 """Computes the current innovation gained by observation at time k.
 
@@ -210,8 +218,10 @@ Takes two inputs:
 """
 function compute_innov_from_obs(Ef::KFEstimators, k::Integer)
     @unpack H, z, R, = Ef
-    δI = H(k)' * inv(R(k)) * H(k)
-    δi = H(k)' * inv(R(k)) * z(k)
+    R_factor = cholesky(Symmetric(Matrix(R(k))); check=true)
+    δI_raw = H(k)' * (R_factor \ H(k))
+    δI = Matrix(Symmetric((δI_raw + δI_raw') / 2))
+    δi = H(k)' * (R_factor \ z(k))
     return δI, δi
 end
 
@@ -242,7 +252,10 @@ end
 
 """Recover the state estimate vector from given info state.
 """
-recover_estimate_from_info(info::KFEnvInfo) = inv(info.Y) * info.y
+function recover_estimate_from_info(info::KFEnvInfo)
+    Y = Matrix(Symmetric((info.Y + info.Y') / 2))
+    cholesky(Symmetric(Y); check=true) \ info.y
+end
 
 recover_estimate_from_info(agent::KFEnvScribe, k::Integer) = recover_estimate_from_info(agent.information[k])
 
@@ -259,6 +272,11 @@ end
 
 """Initialize the Kalman Filter system.
 """
-function initialize_KF(params::SCRIBEModelParameters, observer::SCRIBEObserverBehavior, init_loc::Matrix{Float64}, ground_state::SCRIBEModel)
-    initialize_estimators(initialize_scribe(params, observer, ground_state, init_loc), params)
+function initialize_KF(params::SCRIBEModelParameters, observer::SCRIBEObserverBehavior,
+                       init_loc::Matrix{Float64}, ground_state::SCRIBEModel;
+                       prior_covariance::Union{Nothing, AbstractMatrix{<:Real}}=nothing)
+    let scribe = initialize_scribe(params, observer, ground_state, init_loc;
+                                   prior_covariance)
+        return initialize_estimators(scribe, params)
+    end
 end

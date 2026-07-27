@@ -75,10 +75,10 @@ end
 Use this to fill the LGSFModel field:
     ψ=x->ψ_from_params(x, params)
 """
-function ψ_from_params(x::Union{Vector{Float64}, Float64}, params::LGSFModelParameters)
+function ψ_from_params(x, params::LGSFModelParameters)
     p=zeros(params.nᵩ)
     for (i,k) in enumerate(params.ψ_p)
-        p[i] = (1/k[:τ]) * exp(-(norm(x-k[:μ])^2) / k[:σ])
+        p[i] = (1/k[:τ]) * exp(-(norm(x-k[:μ])^2) / k[:σ]^2)
     end
     # for i in 1:params.nᵩ
     #     p[i] = (1/params.τ[i]) * exp(-(norm(x-params.μ[i])^2) / params.σ[i])
@@ -124,15 +124,6 @@ This is for model estimates. This requires explicit ϕ declarations.
 """
 update_SCRIBEModel(smodel::LGSFModel, ϕₖ) = LGSFModel(smodel.k+1, smodel.params, smodel.ψ,
                                                       ϕₖ, rand(smodel.params.w[:w_dist]))
-
-# function predict_SCRIBEModel(smodel::LGSFModel, x::Union{Vector{Float64}, Float64}, k::Integer)
-#     @assert k==smodel.k "Timestep of prediction does not match the model timestep"
-#     smodel.ψ(x)'⋅smodel.ϕ
-# end
-
-function predict_SCRIBEModel(smodel::LGSFModel, x::Union{Vector{Float64}, Float64})
-    smodel.ψ(x)'⋅smodel.ϕ
-end
 
 get_model_time(smodel::LGSFModel) = smodel.k
 
@@ -205,7 +196,7 @@ function scribe_observations(X::Matrix{Float64}, smodel::LGSFModel, o_b::LGSFObs
     let nₛ=size(X,1), v_s=o_b.v_s, R=v_s[:σ]*I(nₛ)
         v=Dict(:R=>R, :k=>rand(Gaussian(zeros(nₛ), R)))
         (H, X)=compute_obs_dynamics(smodel, X)
-        z=muladd(H,smodel.ϕ,v[:k]).+1.
+        z=muladd(H,smodel.ϕ,v[:k])
         LGSFObserverState(smodel.k, nₛ, X, H, v, z)
     end
 end
