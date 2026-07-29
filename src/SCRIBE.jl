@@ -67,6 +67,7 @@ end
 
 include("kalman_estimation.jl")
 include("model_prediction.jl")
+include("model_visualization.jl")
 
 struct NetworkGraph
     vertices::Dict{String, SCRIBEAgent}

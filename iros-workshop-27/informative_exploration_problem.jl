@@ -1,5 +1,3 @@
-ENV["GKSwstype"] = "100"
-
 using Distributions: Normal
 using LinearAlgebra
 using Match: @match
@@ -27,28 +25,6 @@ struct InformativeExplorationMDP <: MDP{Matrix, Symbol}
     initial_model
     evaluation_grid
     n_steps
-end
-
-experiment_settings(profile) = @match profile begin
-    :full => (
-        seed=18,
-        navigation_points=33,
-        evaluation_points=51,
-        n_samples=108,
-        lookahead=8,
-        time_budget=0.10,
-        animation_fps=4,
-    )
-    :smoke => (
-        seed=18,
-        navigation_points=17,
-        evaluation_points=21,
-        n_samples=16,
-        lookahead=3,
-        time_budget=0.02,
-        animation_fps=2,
-    )
-    _ => throw(ArgumentError("Use the `full` or `smoke` experiment profile."))
 end
 
 POMDPs.statetype(::InformativeExplorationMDP) = Matrix
@@ -261,69 +237,4 @@ function run_exploration(mdp, start, settings)
             visualization=visualization,
         )
     end
-end
-
-function save_experiment(result, output_dir, settings)
-    save_static_visualizations(
-        result.visualization;
-        output_dir,
-        metrics=[
-            :posterior_mean,
-            :posterior_uncertainty,
-            :posterior_against_ground_truth,
-            :absolute_error,
-            :metric_history,
-            :predictions_against_ground_truth,
-            :posterior_summary,
-        ],
-    )
-    save_animated_visualizations(
-        result.visualization;
-        output_dir,
-        metrics=[
-            :posterior_mean,
-            :posterior_uncertainty,
-            :posterior_against_ground_truth,
-            :posterior_summary,
-        ],
-        fps=settings.animation_fps,
-    )
-end
-
-function print_experiment_summary(result, output_dir)
-    let initial=first(result.visualization.frames).summary,
-        final=last(result.visualization.frames).summary
-        println("SCRIBE-backed VulcanJ exploration complete.")
-        println("  samples: $(length(result.observations))")
-        println(
-            "  RMSE: $(round(initial.rmse; digits=4)) → " *
-            "$(round(final.rmse; digits=4))",
-        )
-        println(
-            "  mean posterior σ: " *
-            "$(round(initial.mean_uncertainty; digits=4)) → " *
-            "$(round(final.mean_uncertainty; digits=4))",
-        )
-        println("  results: $output_dir")
-    end
-end
-
-function main(profile=:full)
-    let settings=experiment_settings(profile),
-        problem=exploration_problem(settings),
-        result=run_exploration(problem.mdp, problem.start, settings),
-        output_dir=joinpath(
-            @__DIR__,
-            "res",
-            "vulcan_scribe",
-            String(profile),
-        )
-        save_experiment(result, output_dir, settings)
-        print_experiment_summary(result, output_dir)
-        result
-    end
-end
-
-if abspath(PROGRAM_FILE) == @__FILE__
-    main(isempty(ARGS) ? :full : Symbol(first(ARGS)))
 end

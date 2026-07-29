@@ -41,7 +41,7 @@ ablation_settings(profile) = @match profile begin
 end
 
 function local_scribe_model(scenario, noise_variance, evaluation_locations)
-    let centers=comparison_basis_centers(9),
+    let centers=complicated_local_centers(),
         params=comparison_scribe_parameters(centers, [1.35]),
         smodel=initialize_SCRIBEModel_from_parameters(params),
         covariance=coefficient_prior_covariance(
@@ -54,9 +54,8 @@ function local_scribe_model(scenario, noise_variance, evaluation_locations)
             evaluation_locations,
             covariance;
             field_variance=prior_field_deviation(scenario)^2,
-        ),
-        observer=LGSFObserverBehavior(noise_variance)
-        VulcanSCRIBEModel(smodel, information, observer)
+        )
+        SCRIBEModelState(smodel, information, noise_variance)
     end
 end
 
@@ -109,12 +108,19 @@ function ablation_run_settings(settings, seed)
     )
 end
 
-function ablation_history(history)
-    map(history) do snapshot
+function ablation_records(records)
+    map(records) do record
+        summary=record.summary
         (
-            n_samples=snapshot.n_samples,
-            planning_reward=snapshot.planning_reward,
-            summary=snapshot.summary,
+            n_samples=record.n_samples,
+            planning_reward=record.planning_reward,
+            summary=(
+                rmse=summary.rmse,
+                normalized_rmse=summary.normalized_rmse,
+                predictive_log_likelihood=summary.predictive_log_likelihood,
+                interval_coverage=summary.interval_coverage,
+                integrated_uncertainty=summary.integrated_uncertainty,
+            ),
         )
     end
 end
@@ -134,7 +140,7 @@ function run_ablation(
             0.08,
             reward_locations,
         ),
-        problem=make_comparison_mdp(
+        problem=comparison_problem(
             run_settings,
             scenario,
             initial_model,
@@ -149,7 +155,7 @@ function run_ablation(
         (
             backend=backend,
             seed=seed,
-            history=ablation_history(result.history),
+            records=ablation_records(result.records),
             runtime=result.runtime,
         )
     end
@@ -157,8 +163,8 @@ end
 
 function ablation_metric_series(run, metric)
     metric == :planning_reward ?
-        getproperty.(run.history, :planning_reward) :
-        metric_series(run.history, metric)
+        getproperty.(run.records, :planning_reward) :
+        metric_series(run.records, metric)
 end
 
 function aggregate_ablation_metric(runs, backend, metric)
@@ -168,7 +174,7 @@ function aggregate_ablation_metric(runs, backend, metric)
             map(run -> ablation_metric_series(run, metric), selected),
         )
         (
-            samples=getproperty.(first(selected).history, :n_samples),
+            samples=getproperty.(first(selected).records, :n_samples),
             mean=vec(mean(values; dims=2)),
             deviation=vec(std(values; dims=2, corrected=false)),
         )
@@ -270,7 +276,7 @@ function save_ablation_runs(runs, output_dir)
             "interval_coverage,integrated_uncertainty,runtime",
         )
         foreach(runs) do run
-            summary=last(run.history).summary
+            summary=last(run.records).summary
             println(
                 io,
                 "$(ablation_name(run.backend)),$(run.seed)," *
@@ -285,7 +291,7 @@ end
 
 function final_ablation_summary(runs, backend)
     let selected=filter(run -> run.backend isa typeof(backend), runs),
-        summaries=getproperty.(last.(getproperty.(selected, :history)), :summary)
+        summaries=getproperty.(last.(getproperty.(selected, :records)), :summary)
         (
             rmse=getproperty.(summaries, :rmse),
             normalized_rmse=getproperty.(summaries, :normalized_rmse),

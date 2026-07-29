@@ -39,13 +39,9 @@ function shared_sample_measurements(
     end
 end
 
-function model_only_state(index, location)
-    ComparisonState(index, Tuple(location))
-end
-
 function run_model_only_comparison(scenario, settings, grid)
     let reward_locations=comparison_reward_locations(settings),
-        scribe_problem=make_comparison_mdp(
+        scribe_problem=comparison_problem(
             settings,
             scenario,
             comparison_scribe_model(
@@ -55,7 +51,7 @@ function run_model_only_comparison(scenario, settings, grid)
             ),
             reward_locations,
         ),
-        gp_problem=make_comparison_mdp(
+        gp_problem=comparison_problem(
             settings,
             scenario,
             comparison_gp_model(scenario, 0.08),
@@ -69,17 +65,19 @@ function run_model_only_comparison(scenario, settings, grid)
             settings.seed,
         ),
         truth=comparison_ground_truth(scenario, grid.locations),
-        first_state=model_only_state(1, view(locations, 1, :)),
-        scribe_history=Any[],
-        gp_history=Any[],
+        states=map(location -> reshape(collect(location), 1, :), eachrow(locations)),
+        first_state=first(states),
+        scribe_records=Any[],
+        gp_records=Any[],
         scribe_model=scribe_problem.mdp.initial_model,
         gp_model=gp_problem.mdp.initial_model,
+        scribe_states=SCRIBEModelState[scribe_model],
         scribe_runtime=0.0,
         gp_runtime=0.0
 
         push!(
-            scribe_history,
-            comparison_snapshot(
+            scribe_records,
+            comparison_record(
                 scribe_problem.mdp,
                 scribe_model,
                 grid,
@@ -89,8 +87,8 @@ function run_model_only_comparison(scenario, settings, grid)
             ),
         )
         push!(
-            gp_history,
-            comparison_snapshot(
+            gp_records,
+            comparison_record(
                 gp_problem.mdp,
                 gp_model,
                 grid,
@@ -100,10 +98,8 @@ function run_model_only_comparison(scenario, settings, grid)
             ),
         )
 
-        foreach(enumerate(zip(eachrow(locations), measurements))) do sample
-            index, (location, measurement)=sample
-            state=model_only_state(index, location)
-
+        foreach(enumerate(zip(states, measurements))) do sample
+            index, (state, measurement)=sample
             start_time=time()
             scribe_model=condition_environment_model(
                 scribe_problem.mdp,
@@ -121,42 +117,44 @@ function run_model_only_comparison(scenario, settings, grid)
                 measurement,
             )
             gp_runtime += time() - start_time
+            push!(scribe_states, scribe_model)
 
             push!(
-                scribe_history,
-                comparison_snapshot(
+                scribe_records,
+                comparison_record(
                     scribe_problem.mdp,
                     scribe_model,
                     grid,
                     truth;
                     n_samples=index,
                     state,
-                    observation=measurement,
                 ),
             )
             push!(
-                gp_history,
-                comparison_snapshot(
+                gp_records,
+                comparison_record(
                     gp_problem.mdp,
                     gp_model,
                     grid,
                     truth;
                     n_samples=index,
                     state,
-                    observation=measurement,
                 ),
             )
         end
 
         (
             scribe=(
-                history=scribe_history,
+                records=scribe_records,
+                model_states=scribe_states,
+                sampling_locations=states,
+                observations=measurements,
                 truth=truth,
                 scenario=scenario,
                 runtime=scribe_runtime,
             ),
             gp=(
-                history=gp_history,
+                records=gp_records,
                 truth=truth,
                 scenario=scenario,
                 runtime=gp_runtime,

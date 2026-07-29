@@ -1,0 +1,528 @@
+%%%%%%%%%%%%%%%%%%%%
+%%% CHAPTER 2 %%%%%%
+%%%%%%%%%%%%%%%%%%%%
+
+%%% Model Estimation via System Filtering
+
+@INPROCEEDINGS{battistelli2012KFCI,
+  author={Battistelli, Giorgio and Chisci, Luigi and Mugnai, Giovanni and Farina, Alfonso and Graziano, Antonio},
+  booktitle={2012 IEEE 51st IEEE Conference on Decision and Control (CDC)}, 
+  title={Consensus-based algorithms for distributed filtering}, 
+  year={2012},
+  volume={},
+  number={},
+  pages={794-799},
+  keywords={Stability analysis;Kalman filters;State estimation;Observability;Linear systems;Nonlinear systems;Equations;Distributed state estimation;sensor networks;consensus;nonlinear filtering},
+  doi={10.1109/CDC.2012.6426435}} % fusing KFs and CI together
+
+% Covariance Intersection
+
+@inproceedings{julier1997non,
+  title={A non-divergent estimation algorithm in the presence of unknown correlations},
+  author={Julier, Simon J and Uhlmann, Jeffrey K},
+  booktitle={Proceedings of the 1997 American Control Conference (Cat. No. 97CH36041)},
+  volume={4},
+  pages={2369--2373},
+  year={1997},
+  organization={IEEE}
+} % one of the very first CI papers
+
+@article{chen2002estimation,
+  title={Estimation under unknown correlation: Covariance intersection revisited},
+  author={Chen, Lingji and Arambel, Pablo O and Mehra, Raman K},
+  journal={IEEE Transactions on Automatic Control},
+  volume={47},
+  number={11},
+  pages={1879--1882},
+  year={2002},
+  publisher={IEEE}
+} % the Mehra paper
+
+@inproceedings{niehsen2002information,
+  title={Information fusion based on fast covariance intersection filtering},
+  author={Niehsen, Wolfgang},
+  booktitle={Proceedings of the Fifth International Conference on Information Fusion. FUSION 2002.(IEEE Cat. No. 02EX5997)},
+  volume={2},
+  pages={901--904},
+  year={2002},
+  organization={IEEE}
+} % Wolfgang formulation
+
+%%% Distributed Optimization
+
+@article{nedic2010constrained,
+  title={Constrained consensus and optimization in multi-agent networks},
+  author={Nedic, Angelia and Ozdaglar, Asuman and Parrilo, Pablo A},
+  journal={IEEE Transactions on Automatic Control},
+  volume={55},
+  number={4},
+  pages={922--938},
+  year={2010},
+  publisher={IEEE}
+} % use of consensus algorithms and decentralized methods to solve large-scale optimization problems
+
+@article{xiao2004fast,
+  title={Fast linear iterations for distributed averaging},
+  author={Xiao, Lin and Boyd, Stephen},
+  journal={Systems \& Control Letters},
+  volume={53},
+  number={1},
+  pages={65--78},
+  year={2004},
+  publisher={Elsevier}
+} % gradient-based methods for solving distributed optimization problems
+
+@book{bertsekas2015parallel,
+  title={Parallel and distributed computation: numerical methods},
+  author={Bertsekas, Dimitri and Tsitsiklis, John},
+  year={2015},
+  publisher={Athena Scientific}
+} % book on numerical methods behind distributed computation
+
+% ADMMs
+
+@article{boyd2011distributed,
+  title={Distributed optimization and statistical learning via the alternating direction method of multipliers},
+  author={Boyd, Stephen and Parikh, Neal and Chu, Eric and Peleato, Borja and Eckstein, Jonathan and others},
+  journal={Foundations and Trends{\textregistered} in Machine learning},
+  volume={3},
+  number={1},
+  pages={1--122},
+  year={2011},
+  publisher={Now Publishers, Inc.}
+} % fundamental intro to ADMMs
+
+@article{simonetto2014distributed,
+  title={Distributed maximum likelihood sensor network localization},
+  author={Simonetto, Andrea and Leus, Geert},
+  journal={IEEE Transactions on Signal Processing},
+  volume={62},
+  number={6},
+  pages={1424--1437},
+  year={2014},
+  publisher={IEEE}
+} % Convex relaxations for distributed optimization under ADMMs
+
+@book{rey2018admm,
+  title={ADMM in Optimization and Control: Algorithm Specialization, Computational Distribution, and the Value of Structure},
+  author={Rey, Felix},
+  year={2018},
+  publisher={ETH Zurich}
+} % anytime ADMM | anytime recovery of solution
+
+%%% Distributed Consensus
+
+@article{olfati2007consensus,
+  title={Consensus and cooperation in networked multi-agent systems},
+  author={Olfati-Saber, Reza and Fax, J Alex and Murray, Richard M},
+  journal={Proceedings of the IEEE},
+  volume={95},
+  number={1},
+  pages={215--233},
+  year={2007},
+  publisher={IEEE}
+}
+
+@article{nedic2009distributed,
+  title={Distributed subgradient methods for multi-agent optimization},
+  author={Nedic, Angelia and Ozdaglar, Asuman},
+  journal={IEEE Transactions on Automatic Control},
+  volume={54},
+  number={1},
+  pages={48--61},
+  year={2009},
+  publisher={IEEE}
+} % information convergence in distributed optimization of convex problems
+
+% FIR filters for distributed consensus
+
+@ARTICLE{li2022difir,
+  author={Li, Liya and Shi, Peng and Ahn, Choon Ki},
+  journal={IEEE Transactions on Cybernetics}, 
+  title={Distributed Iterative FIR Consensus Filter for Multiagent Systems Over Sensor Networks}, 
+  year={2022},
+  volume={52},
+  number={6},
+  pages={4647-4660},
+  keywords={Finite impulse response filters;Noise measurement;Multi-agent systems;Robustness;Topology;Measurement uncertainty;Time-varying systems;Consensus;distributed iterative finite impulse response (DIFIR) filter;multiagent systems;sensor network},
+  doi={10.1109/TCYB.2020.3035866}} % distrib iterative FIR filter for target tracking (incomplete system dynamics) 
+
+@ARTICLE{vazquezolguin2017,
+  author={Vazquez-Olguin, Miguel and Shmaliy, Yuriy S. and Ibarra-Manzano, Oscar G.},
+  journal={IEEE Transactions on Industrial Informatics}, 
+  title={Distributed Unbiased FIR Filtering With Average Consensus on Measurements for WSNs}, 
+  year={2017},
+  volume={13},
+  number={3},
+  pages={1440-1447},
+  keywords={Wireless sensor networks;Robustness;Finite impulse response filters;Noise measurement;Kalman filters;Algorithm design and analysis;Informatics;Industrial conditions;Kalman filter (KF);unbiased finite-impulse response (UFIR) filter;wireless sensor network (WSN)},
+  doi={10.1109/TII.2017.2653814}} % Multi-agent Distrib. Consensus in liu of micro-KF
+
+%%%%%%%%%%%%%%%%%%%%
+%%% CHAPTER 3 %%%%%%
+%%%%%%%%%%%%%%%%%%%%
+
+% Gaussian Process Modeling
+
+@article{zhu1997gaussian,
+  title={Gaussian regression and optimal finite dimensional linear models},
+  author={Zhu, Huaiyu and Williams, Christopher KI and Rohwer, Richard and Morciniec, Michal},
+  year={1997},
+  publisher={Aston University}
+}
+
+@inproceedings{viseras2016decentralized,
+  title={Decentralized multi-agent exploration with online-learning of gaussian processes},
+  author={Viseras, Alberto and Wiedemann, Thomas and Manss, Christoph and Magel, Lukas and Mueller, Joachim and Shutin, Dmitriy and Merino, Luis},
+  booktitle={2016 IEEE international conference on robotics and automation (ICRA)},
+  pages={4222--4229},
+  year={2016},
+  organization={IEEE}
+}
+
+@inproceedings{allamraju2017communication,
+  title={Communication efficient decentralized Gaussian process fusion for multi-UAS path planning},
+  author={Allamraju, Rakshit and Chowdhary, Girish},
+  booktitle={2017 American Control Conference (ACC)},
+  pages={4442--4447},
+  year={2017},
+  organization={IEEE}
+}
+
+@article{jang2020multi,
+  title={Multi-robot active sensing and environmental model learning with distributed Gaussian process},
+  author={Jang, Dohyun and Yoo, Jaehyun and Son, Clark Youngdong and Kim, Dabin and Kim, H Jin},
+  journal={IEEE Robotics and Automation Letters},
+  volume={5},
+  number={4},
+  pages={5905--5912},
+  year={2020},
+  publisher={IEEE}
+}
+
+% E-dimensional Gaussian Process Approximations
+
+@article{pillonetto2018distributed,
+  title={Distributed multi-agent Gaussian regression via finite-dimensional approximations},
+  author={Pillonetto, Gianluigi and Schenato, Luca and Varagnolo, Damiano},
+  journal={IEEE Transactions on Pattern Analysis and Machine Intelligence},
+  volume={41},
+  number={9},
+  pages={2098--2111},
+  year={2018},
+  publisher={IEEE}
+}
+
+@article{jang2021fully,
+  title={Fully distributed informative planning for environmental learning with multi-robot systems},
+  author={Jang, Dohyun and Yoo, Jaehyun and Son, Clark Youngdong and Kim, H Jin},
+  journal={arXiv preprint arXiv:2112.14433},
+  year={2021}
+}
+
+@article{kim2023distributed,
+  title={Distributed multi-agent target search and tracking with Gaussian process and reinforcement learning},
+  author={Kim, Jigang and Jang, Dohyun and Kim, H Jin},
+  journal={International Journal of Control, Automation and Systems},
+  volume={21},
+  number={9},
+  pages={3057--3067},
+  year={2023},
+  publisher={Springer}
+}
+
+% Gaussian Scalar Field Modeling
+
+@article{jadaliha2012environmental,
+  title={Environmental monitoring using autonomous aquatic robots: Sampling algorithms and experiments},
+  author={Jadaliha, Mahdi and Choi, Jongeun},
+  journal={IEEE Transactions on Control Systems Technology},
+  volume={21},
+  number={3},
+  pages={899--905},
+  year={2012},
+  publisher={IEEE}
+}
+
+@article{cui2015mutual,
+  title={Mutual information-based multi-AUV path planning for scalar field sampling using multidimensional RRT},
+  author={Cui, Rongxin and Li, Yang and Yan, Weisheng},
+  journal={IEEE Transactions on Systems, Man, and Cybernetics: Systems},
+  volume={46},
+  number={7},
+  pages={993--1004},
+  year={2015},
+  publisher={IEEE}
+}
+
+% Background on distributed modeling of systems underwater
+
+@inproceedings{allamraju2017communication,
+  title={Communication efficient decentralized Gaussian process fusion for multi-UAS path planning},
+  author={Allamraju, Rakshit and Chowdhary, Girish},
+  booktitle={2017 American Control Conference (ACC)},
+  pages={4442--4447},
+  year={2017},
+  organization={IEEE}
+}
+
+% ICI Distributed Consensus
+
+@article{tamjidi2021unifying,
+  title={Unifying consensus and covariance intersection for efficient distributed state estimation over unreliable networks},
+  author={Tamjidi, Amirhossein and Oftadeh, Reza and Mohamed, Mohamed Naveed Gul and Yu, Dan and Chakravorty, Suman and Shell, Dylan},
+  journal={IEEE Transactions on Robotics},
+  volume={37},
+  number={5},
+  pages={1525--1538},
+  year={2021},
+  publisher={IEEE}
+} % Dr. Shell Hybrid ICI paper
+
+% Distributed Averaging Filter
+@inproceedings{xiao2005scheme,
+  title={A scheme for robust distributed sensor fusion based on average consensus},
+  author={Xiao, Lin and Boyd, Stephen and Lall, Sanjay},
+  booktitle={IPSN 2005. Fourth International Symposium on Information Processing in Sensor Networks, 2005.},
+  pages={63--70},
+  year={2005},
+  organization={IEEE}
+}
+
+% Distributed (iterative) covariance intersection
+@article{wang2012distributed,
+  title={Distributed estimation fusion with unavailable cross-correlation},
+  author={Wang, Yimin and Li, X Rong},
+  journal={IEEE Transactions on Aerospace and Electronic Systems},
+  volume={48},
+  number={1},
+  pages={259--278},
+  year={2012},
+  publisher={IEEE}
+}
+
+%%%%%%%%%%%%%%%%%%%%
+%%% CHAPTER 3 %%%%%%
+%%%%%%%%%%%%%%%%%%%%
+
+@inproceedings{olkin2024multi,
+  title={Multi-Agent Vulcan: An Information-Driven Multi-Agent Path Finding Approach},
+  author={Olkin, Jake and Parimi, Viraj and Williams, Brian},
+  booktitle={2024 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)},
+  pages={10253--10259},
+  year={2024},
+  organization={IEEE}
+}
+
+@article{vrolijk2021using,
+  title={Using a ladder of seeps with computer decision processes to explore for and evaluate cold seeps on the costa rica active margin},
+  author={Vrolijk, Peter and Summa, Lori and Ayton, Benjamin and Nomikou, Paraskevi and H{\"u}pers, Andre and Kinnaman, Frank and Sylva, Sean and Valentine, David and Camilli, Richard},
+  journal={Frontiers in Earth Science},
+  volume={9},
+  pages={601019},
+  year={2021},
+  publisher={Frontiers Media SA}
+}
+
+%%%%%%%%%%%%% Prior work
+
+% market-based allocation
+
+@article{ono2010market,
+  title={Market-based risk allocation for multi-agent systems},
+  author={Ono, Masahiro and Williams, Brian C},
+  year={2010},
+  publisher={Association for Computing Machinery}
+} 
+
+@inproceedings{ferri2017market,
+  title={A market-based task allocation framework for autonomous underwater surveillance networks},
+  author={Ferri, Gabriele and Munafo, Andrea and Tesei, Alessandra and LePage, Kevin},
+  booktitle={OCEANS 2017-Aberdeen},
+  pages={1--10},
+  year={2017},
+  organization={IEEE}
+}
+
+% Survey of multi-robot task assignment
+
+@article{khamis2015multi,
+  title={Multi-robot task allocation: A review of the state-of-the-art},
+  author={Khamis, Alaa and Hussein, Ahmed and Elmogy, Ahmed},
+  journal={Cooperative robots and sensor networks 2015},
+  pages={31--51},
+  year={2015},
+  publisher={Springer}
+}
+
+%%%%%%%%%%
+
+@article{yilmaz2008path,
+  title={Path planning of autonomous underwater vehicles for adaptive sampling using mixed integer linear programming},
+  author={Yilmaz, Namik Kemal and Evangelinos, Constantinos and Lermusiaux, Pierre FJ and Patrikalakis, Nicholas M},
+  journal={IEEE Journal of Oceanic Engineering},
+  volume={33},
+  number={4},
+  pages={522--537},
+  year={2008},
+  publisher={IEEE}
+}
+
+@article{salan2014minimum,
+  title={Minimum-energy robotic exploration: A formulation and an approach},
+  author={Salan, Serge and Drumwright, Evan and Lin, King-Ip},
+  journal={IEEE Transactions on Systems, Man, and Cybernetics: Systems},
+  volume={45},
+  number={1},
+  pages={175--182},
+  year={2014},
+  publisher={IEEE}
+}
+
+@article{julian2012distributed,
+  title={Distributed robotic sensor networks: An information-theoretic approach},
+  author={Julian, Brian J and Angermann, Michael and Schwager, Mac and Rus, Daniela},
+  journal={The International Journal of Robotics Research},
+  volume={31},
+  number={10},
+  pages={1134--1154},
+  year={2012},
+  publisher={SAGE Publications Sage UK: London, England}
+}
+
+@article{bayat2017environmental,
+  title={Environmental monitoring using autonomous vehicles: a survey of recent searching techniques},
+  author={Bayat, Behzad and Crasta, Naveena and Crespi, Alessandro and Pascoal, Ant{\'o}nio M and Ijspeert, Auke},
+  journal={Current opinion in biotechnology},
+  volume={45},
+  pages={76--84},
+  year={2017},
+  publisher={Elsevier}
+}
+
+@article{cui2015mutual,
+  title={Mutual information-based multi-AUV path planning for scalar field sampling using multidimensional RRT},
+  author={Cui, Rongxin and Li, Yang and Yan, Weisheng},
+  journal={IEEE Transactions on Systems, Man, and Cybernetics: Systems},
+  volume={46},
+  number={7},
+  pages={993--1004},
+  year={2015},
+  publisher={IEEE}
+}
+
+@article{zhao2022marine,
+  title={Marine Adaptive Sampling Scheme Design for Mobile Platforms under Different Scenarios},
+  author={Zhao, Yuxin and Zhao, Hengde and Liu, Yanlong and Deng, Xiong},
+  journal={Journal of Marine Science and Engineering},
+  volume={10},
+  number={5},
+  pages={664},
+  year={2022},
+  publisher={MDPI}
+}
+
+@article{zeng2023information,
+  title={Information-Driven Path Planning for Hybrid Aerial Underwater Vehicles},
+  author={Zeng, Zheng and Xiong, Chengke and Yuan, Xinyi and Zhou, Hexiong and Bai, Yuling and Jin, Yufei and Lu, Di and Lian, Lian},
+  journal={IEEE Journal of Oceanic Engineering},
+  year={2023},
+  publisher={IEEE}
+}
+
+@article{hwang2019auv,
+  title={AUV adaptive sampling methods: A review},
+  author={Hwang, Jimin and Bose, Neil and Fan, Shuangshuang},
+  journal={Applied Sciences},
+  volume={9},
+  number={15},
+  pages={3145},
+  year={2019},
+  publisher={MDPI}
+}
+
+%%%%%%%%%%%%%
+
+@inproceedings{zhang2022dave,
+  title={Dave aquatic virtual environment: Toward a general underwater robotics simulator},
+  author={Zhang, Mabel M and Choi, Woen-Sug and Herman, Jessica and Davis, Duane and Vogt, Carson and McCarrin, Michael and Vijay, Yadunund and Dutia, Dharini and Lew, William and Peters, Steven and others},
+  booktitle={2022 IEEE/OES Autonomous Underwater Vehicles Symposium (AUV)},
+  pages={1--8},
+  year={2022},
+  organization={IEEE}
+}
+
+@article{shorinwa2023distributed,
+  title={Distributed Multirobot Task Assignment via Consensus ADMM},
+  author={Shorinwa, Ola and Haksar, Ravi N and Washington, Patrick and Schwager, Mac},
+  journal={IEEE Transactions on Robotics},
+  year={2023},
+  publisher={IEEE}
+}
+
+@article{chang2016proximal,
+  title={A proximal dual consensus ADMM method for multi-agent constrained optimization},
+  author={Chang, Tsung-Hui},
+  journal={IEEE Transactions on Signal Processing},
+  volume={64},
+  number={14},
+  pages={3719--3734},
+  year={2016},
+  publisher={IEEE}
+}
+
+@inproceedings{li2022sma,
+  title={SMA-NBO: A Sequential Multi-Agent Planning with Nominal Belief-State Optimization in Target Tracking},
+  author={Li, Tianqi and Krakow, Lucas W and Gopalswamy, Swaminathan},
+  booktitle={2022 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)},
+  pages={5861--5868},
+  year={2022},
+  organization={IEEE}
+}
+
+@article{ayton2018vulcan,
+  title={Vulcan: a monte carlo algorithm for large chance constrained mdps with risk bounding functions},
+  author={Ayton, Benjamin J and Williams, Brian C},
+  journal={arXiv preprint arXiv:1809.01220},
+  year={2018}
+}
+
+@article{mokhtari2016dqm,
+  title={DQM: Decentralized quadratically approximated alternating direction method of multipliers},
+  author={Mokhtari, Aryan and Shi, Wei and Ling, Qing and Ribeiro, Alejandro},
+  journal={IEEE Transactions on Signal Processing},
+  volume={64},
+  number={19},
+  pages={5158--5173},
+  year={2016},
+  publisher={IEEE}
+} % DQM
+
+@article{zhang2022privacypcdqm,
+  title={Privacy-preserving distributed admm with event-triggered communication},
+  author={Zhang, Zhen and Yang, Shaofu and Xu, Wenying and Di, Kai},
+  journal={IEEE Transactions on Neural Networks and Learning Systems},
+  volume={35},
+  number={2},
+  pages={2835--2847},
+  year={2022},
+  publisher={IEEE}
+} % PC-DQM
+
+@article{zhang2023decentralizedCCDQM,
+  title={Decentralized ADMM with compressed and event-triggered communication},
+  author={Zhang, Zhen and Yang, Shaofu and Xu, Wenying},
+  journal={Neural Networks},
+  year={2023},
+  publisher={Elsevier}
+} % CCDQM
+
+@article{billionnet2013CQCR,
+  title={An efficient compact quadratic convex reformulation for general integer quadratic programs},
+  author={Billionnet, Alain and Elloumi, Sourour and Lambert, Am{\'e}lie},
+  journal={Computational Optimization and Applications},
+  volume={54},
+  pages={141--162},
+  year={2013},
+  publisher={Springer}
+}

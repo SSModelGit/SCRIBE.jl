@@ -7,41 +7,51 @@ environment model supplied to VulcanJ's information-based MCTS planner. The
 integration consists of four dispatched methods:
 
 - initialize the planning model;
-- evaluate the mutual information of a candidate sample;
+- evaluate the planner's integrated variance-reduction reward;
 - return its posterior predictive measurement distribution;
 - condition the model on a simulated or realized measurement.
 
 VulcanJ remains responsible for planning. SCRIBE remains responsible for all
-model prediction, conditioning, and information calculations. The script adds
-the local VulcanJ and SCRIBE package environments to Julia's load path, with
-VulcanJ first so its resolved planning dependencies remain intact. Set
-`VULCANJ_ROOT` when VulcanJ is stored somewhere other than
-`/home/shashank/cbase/secondary/jbase/VulcanJ`.
+model prediction, conditioning, information calculations, and posterior
+visualization. The actual exploration loop stores each conditioned
+`SCRIBEModelState` as it is produced. Those model states go directly to the
+visualization interface; observations are not replayed afterward.
+
+Prepare the example environment from the SCRIBE root with:
+
+```sh
+julia --project=examples -e '
+    using Pkg
+    Pkg.develop(path=".")
+    Pkg.develop(path="/home/shashank/cbase/secondary/jbase/VulcanJ")
+    Pkg.instantiate()
+'
+```
+
+Change the second path when VulcanJ has a different local location.
 
 The complete profile uses an eight-connected 33×33 navigation grid and a
-48-sample mission. Its 36 overlapping scalar-field bases have a spatially
-correlated coefficient prior. The synthetic truth is deliberately outside
-this native parameterization: it uses a rotated and translated 5×5 dictionary
-of narrower GSFs, with asymmetric local and domain-scale structure. Its wells
-therefore do not coincide with the learner's regular 6×6 basis centers.
-During MCTS, predictive measurements retain their sampled values for model
-conditioning but compare by sampling-state history in tree keys. This is exact
-for SCRIBE's linear-Gaussian covariance planning and prevents continuous
-measurements from fragmenting the deeper search tree. The planning reward is
-mean integrated field-variance reduction over a fixed evaluation grid;
-expected mutual information and realized KL are retained as separate
-posterior diagnostics.
+108-sample mission. Its 36 overlapping scalar-field bases have a spatially
+correlated coefficient prior. The synthetic truth is a direct analytic
+function combining domain-scale variation and two off-grid local features, so
+it is not constructed from—or aligned with—the learner's basis dictionary.
+The MDP state is simply the physical sampling location, and its transition
+clamps an eight-connected motion step to the domain. VulcanJ receives
+SCRIBE's scalar posterior predictive `Normal` directly. The planning objective
+is mean integrated field-variance reduction over a fixed evaluation grid; it
+is defined by the planner integration using the current SCRIBE posterior, not
+by SCRIBE itself.
 
 Run the complete experiment with:
 
 ```sh
-julia examples/vulcan_scribe_exploration.jl
+julia --project=examples examples/vulcan_scribe_exploration.jl
 ```
 
 A short compilation and plotting check is also available:
 
 ```sh
-julia examples/vulcan_scribe_exploration.jl smoke
+julia --project=examples examples/vulcan_scribe_exploration.jl smoke
 ```
 
 Both profiles write a compact four-panel diagnostic animation, a focused
@@ -50,6 +60,71 @@ posterior-uncertainty animations, a final surface comparison, information and
 error histories, and predicted-versus-ground-truth plots. Results are separated under
 `examples/res/vulcan_scribe/<profile>/`, so a smoke render cannot overwrite
 the full experiment.
+
+## SCRIBE visualization interface
+
+The package visualization path starts from a regular evaluation grid:
+
+```julia
+grid = SCRIBEVisualizationGrid(x, y)
+```
+
+First pair the SCRIBE model with its information state and measurement noise:
+
+```julia
+initial_model = SCRIBEModelState(smodel, initial_information, R)
+```
+
+Given `SCRIBEObservation(X, z, R)` or `LGSFObserverState` entries, only the
+observations and initial model are required. Locations are not drawn as a
+trajectory unless they are separately supplied through `sampling_locations`:
+
+```julia
+visualization = scribe_model_history(
+    observations,
+    initial_model;
+    sampling_locations=nothing,
+    grid,
+    ground_truth,
+)
+```
+
+Raw measurement values can use `sampling_locations` for both filtering and
+trajectory visualization. Alternatively, supply an observation function and
+sampling locations directly:
+
+```julia
+visualization = scribe_model_history(
+    X -> observe_environment(X),
+    sampling_locations,
+    initial_model;
+    grid,
+    ground_truth,
+)
+```
+
+Set `show_sampling_path=false` to suppress that trajectory. A vector beginning
+with the initial `SCRIBEModelState` and followed by updated model states can
+also be passed directly to `scribe_model_history`.
+
+Each visualization has its own exported function, such as
+`plot_posterior_mean_map`, `plot_posterior_against_ground_truth`,
+`animate_posterior_mean_map`, and
+`animate_posterior_against_ground_truth`. Batch output is selected explicitly:
+
+```julia
+save_static_visualizations(
+    visualization;
+    output_dir,
+    metrics=[:posterior_mean, :posterior_uncertainty],
+)
+
+save_animated_visualizations(
+    visualization;
+    output_dir,
+    metrics=[:posterior_mean, :posterior_against_ground_truth],
+)
+```
 
 ## SCRIBE and Gaussian-process comparisons
 
@@ -60,13 +135,16 @@ the posterior backend is the experimental variable. The two prior
 field-uncertainty amplitudes are matched; neither model is fitted to the
 ground-truth function. The GP branch uses GaussianProcesses.jl's standard
 `GPE`, SE kernel, observation-noise model, posterior prediction, and
-conditioning machinery.
+conditioning machinery. Both planners operate directly on the physical
+sampling location and use scalar predictive measurement distributions. SCRIBE
+visualizations consume the posterior states saved during the run; the
+observations are not replayed afterward.
 
 The introductory comparison uses a smooth two-lobe field and a single-scale
 SCRIBE basis:
 
 ```sh
-julia examples/vulcan_simple_model_comparison.jl
+julia --project=examples examples/vulcan_simple_model_comparison.jl
 ```
 
 The difficult comparison combines domain-wide variation, local anomalies, and
@@ -74,13 +152,17 @@ a curved narrow feature. Its SCRIBE model uses local and broad GSFs together
 with a scale-aware prior:
 
 ```sh
-julia examples/vulcan_complicated_model_comparison.jl
+julia --project=examples examples/vulcan_complicated_model_comparison.jl
 ```
 
 Its SCRIBE backend uses two overlapping GSF scales. A dense 9×9 dictionary of
 narrow fields carries local variation, while a sparse 4×4 dictionary of broad
 fields carries the domain-scale structure. This allocates spatial coverage
-according to scale instead of repeating one center grid for every width.
+according to scale instead of repeating one center grid for every width. The
+two dictionaries use distinct staggered lattices, while the ground-truth wells
+are off-grid, rotated, and anisotropic. Consequently, neither well coincides
+with a SCRIBE basis and the truth is not exactly represented by the model
+dictionary.
 Coefficients are spatially correlated within each scale but independent
 between scales, avoiding an artificial assumption that broad and local
 features are interchangeable. The resulting prior is normalized at the field
@@ -105,8 +187,8 @@ sequence and one seeded noisy measurement vector, then conditions SCRIBE and
 the GP on precisely the same `(location, measurement)` pairs.
 
 ```sh
-julia examples/vulcan_model_only_comparison.jl
-julia examples/vulcan_model_only_comparison.jl smoke
+julia --project=examples examples/vulcan_model_only_comparison.jl
+julia --project=examples examples/vulcan_model_only_comparison.jl smoke
 ```
 
 The runner evaluates both the simple and complicated truths. It saves the
@@ -126,8 +208,8 @@ sequentially and retain only metric histories, rather than posterior
 animations or search trees. The smoke profile uses two seeds.
 
 ```sh
-julia examples/vulcan_mcts_ablation.jl
-julia examples/vulcan_mcts_ablation.jl smoke
+julia --project=examples examples/vulcan_mcts_ablation.jl
+julia --project=examples examples/vulcan_mcts_ablation.jl smoke
 ```
 
 The aggregate figure reports the mean trajectory with a one-standard-deviation
