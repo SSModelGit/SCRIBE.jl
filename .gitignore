@@ -3,6 +3,7 @@
 *.jld2
 *.png
 *feedback*
+/examples/res/
 poetry.lock
 .python-version
 pyproject.toml

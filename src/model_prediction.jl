@@ -10,6 +10,7 @@ export recover_covariance_from_info, predict_model_uncertainty
 export predict_measurement_uncertainty, evaluate_information_metric
 export measurement_information, condition_on_measurement
 export logdet_positive_definite, D_KL, mutual_information
+export integrated_variance_reduction
 
 """Evaluate the mean of a SCRIBE model at a location."""
 function predict_SCRIBEModel(
@@ -287,5 +288,59 @@ function mutual_information(smodel::SCRIBEModel, info::KFEnvInfo, X, R;
                             units::Symbol=:nats)
     let H=prediction_dynamics(smodel, X)
         mutual_information(info, H, R; units)
+    end
+end
+
+function evaluate_variance_reduction(δσ², metric::Symbol)
+    @match metric begin
+        :pointwise => δσ²
+        :total => sum(δσ²)
+        :mean => mean(δσ²)
+        _ => throw(ArgumentError("Unknown variance-reduction metric: $metric"))
+    end
+end
+
+"""Evaluate field-variance reduction from sampling with dynamics `Hₛ`.
+
+`Hₑ` contains the model dynamics at the locations over which the reduction is
+evaluated. Unlike mutual information, this criterion directly weights how a
+sample changes predictive uncertainty across the represented field.
+"""
+function integrated_variance_reduction(
+    info::KFEnvInfo,
+    Hₛ,
+    Hₑ,
+    R;
+    metric::Symbol=:mean,
+)
+    let coefficients=posterior_coefficient_moments(info),
+        Rₛ=measurement_noise_covariance(R, size(Hₛ, 1)),
+        S=prediction_symmetric(Hₛ * coefficients.Σ * Hₛ' + Rₛ),
+        S_factor=factor_positive_definite(S),
+        cross_covariance=Hₑ * coefficients.Σ * Hₛ',
+        weighted_cross_covariance=S_factor \ cross_covariance',
+        δσ²=vec(sum(
+            cross_covariance .* weighted_cross_covariance';
+            dims=2,
+        ))
+        evaluate_variance_reduction(δσ², metric)
+    end
+end
+
+"""Evaluate integrated variance reduction from sampling at `Xₛ`.
+
+The reduction is evaluated over the row-locations in `Xₑ`.
+"""
+function integrated_variance_reduction(
+    smodel::SCRIBEModel,
+    info::KFEnvInfo,
+    Xₛ,
+    Xₑ,
+    R;
+    metric::Symbol=:mean,
+)
+    let Hₛ=prediction_dynamics(smodel, Xₛ),
+        Hₑ=prediction_dynamics(smodel, Xₑ)
+        integrated_variance_reduction(info, Hₛ, Hₑ, R; metric)
     end
 end
