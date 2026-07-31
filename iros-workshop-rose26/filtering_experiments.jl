@@ -9,11 +9,13 @@ abstract type PublicationFusion end
 
 struct SCRIBEFusion <: PublicationFusion end
 struct IndependentFusion <: PublicationFusion end
-struct NaiveInformationSum <: PublicationFusion end
+struct KalmanFilterOnlyFusion <: PublicationFusion end
+struct CovarianceIntersectionOnlyFusion <: PublicationFusion end
 
 fusion_name(::SCRIBEFusion) = :scribe
 fusion_name(::IndependentFusion) = :independent
-fusion_name(::NaiveInformationSum) = :naive_sum
+fusion_name(::KalmanFilterOnlyFusion) = :kf_only
+fusion_name(::CovarianceIntersectionOnlyFusion) = :ci_only
 
 """A minimal information-filter state used by the publication experiments."""
 mutable struct PublicationScribe <: EnvScribe
@@ -83,6 +85,7 @@ publication_settings(profile) = @match profile begin
         n_agents=4,
         n_steps=24,
         phase_steps=(8, 8, 8),
+        communication_radius=8.25,
         basis_points=5,
         evaluation_points=31,
         noise_variance=0.04,
@@ -95,6 +98,7 @@ publication_settings(profile) = @match profile begin
         n_agents=4,
         n_steps=6,
         phase_steps=(2, 2, 2),
+        communication_radius=8.25,
         basis_points=4,
         evaluation_points=15,
         noise_variance=0.04,
@@ -280,23 +284,56 @@ function empty_edges(ids)
 end
 
 function communication_phase(k, settings)
-    let connected_end=settings.phase_steps[1],
-        outage_end=connected_end + settings.phase_steps[2]
-        k ≤ connected_end ? :connected :
-        k ≤ outage_end ? :outage :
-        :reconnected
+    let limited_end=settings.phase_steps[1],
+        blackout_end=limited_end + settings.phase_steps[2]
+        k ≤ limited_end ? :limited_communication :
+        k ≤ blackout_end ? :communication_blackout :
+        :limited_recovery
     end
+end
+
+function publication_distance_limited_matching(k, ids, settings)
+    positions = Dict(
+        aid => sample_location(
+            parse(Int, replace(aid, "agent" => "")),
+            k,
+            settings,
+        )
+        for aid in ids
+    )
+    candidates = [
+        (
+            distance=norm(positions[ids[left]] - positions[ids[right]]),
+            left=ids[left],
+            right=ids[right],
+        )
+        for left in 1:(length(ids) - 1)
+        for right in (left + 1):length(ids)
+        if norm(positions[ids[left]] - positions[ids[right]]) ≤
+            settings.communication_radius
+    ]
+    edges = empty_edges(ids)
+    used = Set{String}()
+    foreach(sort(candidates; by=item -> item.distance)) do item
+        if item.left ∉ used && item.right ∉ used
+            push!(edges[item.left], item.right)
+            push!(edges[item.right], item.left)
+            push!(used, item.left)
+            push!(used, item.right)
+        end
+    end
+    edges
 end
 
 function scheduled_edges(experiment, k, ids, settings)
     @match experiment begin
         1 => complete_edges(ids)
-        2 => communication_phase(k, settings) == :outage ?
-            split_edges(ids) :
-            complete_edges(ids)
-        3 => communication_phase(k, settings) == :outage ?
-            split_edges(ids) :
-            complete_edges(ids)
+        2 => communication_phase(k, settings) == :communication_blackout ?
+            empty_edges(ids) :
+            publication_distance_limited_matching(k, ids, settings)
+        3 => communication_phase(k, settings) == :communication_blackout ?
+            empty_edges(ids) :
+            publication_distance_limited_matching(k, ids, settings)
     end
 end
 
@@ -475,32 +512,29 @@ function fusion_step!(
     (messages=0, bytes=0, iterations=1)
 end
 
-function naive_component_update!(component, ng, k)
-    let priors=map(component) do aid
-            compute_info_priors(ng.vertices[aid].estimators, k)
-        end,
-        innovations=map(component) do aid
-            compute_innov_from_obs(ng.vertices[aid].estimators, k)
-        end,
-        Y⁻=sum(first, priors),
-        y⁻=sum(last, priors),
-        δI=sum(first, innovations),
-        δi=sum(last, innovations),
-        Y=(Y⁻ + δI),
-        info=KFEnvInfo(
-            y⁻ + δi,
-            (Y + Y') / 2,
-            δi,
-            δI,
+function kalman_filter_component_update!(component, ng, k)
+    innovations = map(component) do aid
+        compute_innov_from_obs(ng.vertices[aid].estimators, k)
+    end
+    δI = sum(first, innovations)
+    δi = sum(last, innovations)
+    foreach(component) do aid
+        Y⁻, y⁻ = compute_info_priors(ng.vertices[aid].estimators, k)
+        Y = Y⁻ + δI
+        next_agent_info_state(
+            ng.vertices[aid].agent,
+            KFEnvInfo(
+                y⁻ + δi,
+                (Y + Y') / 2,
+                δi,
+                δI,
+            ),
         )
-        foreach(component) do aid
-            next_agent_info_state(ng.vertices[aid].agent, copy(info))
-        end
     end
 end
 
 function fusion_step!(
-    ::NaiveInformationSum,
+    ::KalmanFilterOnlyFusion,
     ng,
     k,
     edges,
@@ -508,7 +542,57 @@ function fusion_step!(
 )
     update_network_graph_edges(edges, ng)
     foreach(connected_components(edges)) do component
-        naive_component_update!(component, ng, k)
+        kalman_filter_component_update!(component, ng, k)
+    end
+    messages=sum(length, values(edges))
+    finish_publication_step!(ng)
+    (
+        messages=messages,
+        bytes=messages * payload_bytes(ng),
+        iterations=1,
+    )
+end
+
+function covariance_intersection_component_update!(component, ng, k)
+    local_posteriors = [
+        local_information_update(ng.vertices[aid].estimators, k)
+        for aid in component
+    ]
+    weights = SCRIBE.covariance_intersection_weights(
+        [info.Y for info in local_posteriors],
+    )
+    Y = sum(
+        weights[index] * local_posteriors[index].Y
+        for index in eachindex(weights)
+    )
+    y = sum(
+        weights[index] * local_posteriors[index].y
+        for index in eachindex(weights)
+    )
+    δI = sum(
+        weights[index] * local_posteriors[index].I
+        for index in eachindex(weights)
+    )
+    δi = sum(
+        weights[index] * local_posteriors[index].i
+        for index in eachindex(weights)
+    )
+    fused = KFEnvInfo(y, (Y + Y') / 2, δi, (δI + δI') / 2)
+    foreach(component) do aid
+        next_agent_info_state(ng.vertices[aid].agent, copy(fused))
+    end
+end
+
+function fusion_step!(
+    ::CovarianceIntersectionOnlyFusion,
+    ng,
+    k,
+    edges,
+    _settings,
+)
+    update_network_graph_edges(edges, ng)
+    foreach(connected_components(edges)) do component
+        covariance_intersection_component_update!(component, ng, k)
     end
     messages=sum(length, values(edges))
     finish_publication_step!(ng)
@@ -714,12 +798,14 @@ function experiment_backends(experiment)
         2 => (
             SCRIBEFusion(),
             IndependentFusion(),
-            NaiveInformationSum(),
+            KalmanFilterOnlyFusion(),
+            CovarianceIntersectionOnlyFusion(),
         )
         3 => (
             SCRIBEFusion(),
             IndependentFusion(),
-            NaiveInformationSum(),
+            KalmanFilterOnlyFusion(),
+            CovarianceIntersectionOnlyFusion(),
         )
     end
 end
@@ -728,7 +814,7 @@ experiment_truth(experiment) =
     experiment == 3 ? :misspecified : :matched
 
 function trial_phase(experiment, k, settings)
-    experiment == 1 ? :connected : communication_phase(k, settings)
+    experiment == 1 ? :continuous_sharing : communication_phase(k, settings)
 end
 
 function current_information(ng)

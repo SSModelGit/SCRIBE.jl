@@ -3,17 +3,19 @@ using Match: @match
 using Statistics
 
 publication_backend_title(backend) = @match backend begin
-    :centralized => "Centralized oracle"
+    :centralized => "Centralized (Ideal)"
     :scribe => "SCRIBE"
-    :independent => "No communication"
-    :naive_sum => "Naive information sum"
+    :kf_only => "KF Only"
+    :ci_only => "CI Only"
+    :independent => "No Communication"
 end
 
 publication_backend_color(backend) = @match backend begin
     :centralized => :black
     :scribe => :royalblue
+    :kf_only => :firebrick
+    :ci_only => :purple
     :independent => :darkorange
-    :naive_sum => :firebrick
 end
 
 function metric_aggregate(rows, backend, metric)
@@ -43,6 +45,7 @@ metric_transform(value, transform) = @match transform begin
     :identity => value
     :log10 => log10(max(value, eps()))
     :kibibytes => value / 1024
+    :percent => 100 * value
 end
 
 function publication_metric_plot(
@@ -56,7 +59,7 @@ function publication_metric_plot(
     let plot_object=plot(
             ;
             title,
-            xlabel="measurement step",
+            xlabel="Measurement Round",
             ylabel,
         )
         foreach(backends) do backend
@@ -65,6 +68,7 @@ function publication_metric_plot(
             deviation_values=@match transform begin
                 :identity => aggregate.deviation
                 :kibibytes => aggregate.deviation ./ 1024
+                :percent => 100 .* aggregate.deviation
                 :log10 => zeros(length(aggregate.deviation))
             end
             plot!(
@@ -102,31 +106,31 @@ function exactness_figure(rows)
             rows,
             backends,
             :rmse,
-            "Field accuracy",
-            "RMSE",
+            "Field Reconstruction under Continuous Sharing",
+            "RMSE [normalized field units]",
         ),
         consensus=publication_metric_plot(
             rows,
             (:scribe, :independent),
             :prediction_consensus_rmse,
-            "Inter-agent agreement",
-            "log₁₀ pairwise prediction RMSE";
+            "Inter-Agent Disagreement",
+            "log₁₀(Prediction RMSE [normalized field units])";
             transform=:log10,
         ),
         centralized_gap=publication_metric_plot(
             rows,
             (:scribe, :independent),
             :centralized_prediction_gap,
-            "Centralized-posterior agreement",
-            "log₁₀ prediction gap";
+            "Gap to Pooled-Observation Posterior",
+            "log₁₀(Prediction RMSE [normalized field units])";
             transform=:log10,
         ),
         nees=publication_metric_plot(
             rows,
             backends,
             :normalized_nees,
-            "Coefficient consistency",
-            "normalized NEES",
+            "Coefficient-State Consistency",
+            "Normalized NEES [unitless]",
         )
         hline!(nees, [1.0]; color=:gray, linestyle=:dash, label=false)
         plot(
@@ -137,58 +141,63 @@ function exactness_figure(rows)
             layout=(2, 2),
             size=(1000, 760),
             margin=2 * Plots.mm,
+            titlefontsize=10,
+            guidefontsize=9,
+            tickfontsize=8,
+            legendfontsize=8,
         )
     end
 end
 
 function reconnection_figure(rows, settings)
-    let backends=(:centralized, :scribe, :independent, :naive_sum),
+    let backends=(:centralized, :scribe, :kf_only, :ci_only, :independent),
         rmse=publication_metric_plot(
             rows,
             backends,
             :rmse,
-            "Field accuracy",
-            "RMSE",
+            "Field Reconstruction during Communication Loss",
+            "RMSE [normalized field units]",
         ),
         consensus=publication_metric_plot(
             rows,
-            (:scribe, :independent, :naive_sum),
+            (:scribe, :kf_only, :ci_only, :independent),
             :prediction_consensus_rmse,
-            "Inter-agent agreement",
-            "log₁₀ pairwise prediction RMSE";
+            "Inter-Agent Disagreement",
+            "log₁₀(Prediction RMSE [normalized field units])";
             transform=:log10,
         ),
         coverage=publication_metric_plot(
             rows,
             backends,
             :interval_coverage,
-            "95% latent interval coverage",
-            "coverage",
+            "Posterior Calibration",
+            "95% Interval Coverage [%]";
+            transform=:percent,
         ),
         centralized_gap=publication_metric_plot(
             rows,
-            (:scribe, :independent, :naive_sum),
+            (:scribe, :kf_only, :ci_only, :independent),
             :centralized_prediction_gap,
-            "Centralized-posterior agreement",
-            "log₁₀ prediction gap";
+            "Gap to Pooled-Observation Posterior",
+            "log₁₀(Prediction RMSE [normalized field units])";
             transform=:log10,
         ),
         conservatism=publication_metric_plot(
             rows,
-            (:scribe, :independent, :naive_sum),
+            (:scribe, :kf_only, :ci_only, :independent),
             :minimum_conservatism_eigenvalue,
-            "Covariance relative to centralized oracle",
-            "minimum eigenvalue P − Pₒ",
+            "Covariance Conservatism",
+            "Minimum eigenvalue of P − Pₒ [field units²]",
         ),
         communication=publication_metric_plot(
             rows,
-            (:scribe, :naive_sum),
+            (:scribe, :kf_only, :ci_only),
             :cumulative_bytes,
-            "Cumulative communicated payload",
-            "KiB";
+            "Cumulative Model-Exchange Payload",
+            "Data Transmitted [KiB]";
             transform=:kibibytes,
         )
-        hline!(coverage, [0.95]; color=:gray, linestyle=:dash, label=false)
+        hline!(coverage, [95.0]; color=:gray, linestyle=:dash, label=false)
         hline!(
             conservatism,
             [0.0];
@@ -215,58 +224,63 @@ function reconnection_figure(rows, settings)
             conservatism,
             communication;
             layout=(3, 2),
-            size=(1050, 1120),
+            size=(1200, 1200),
             margin=2 * Plots.mm,
+            titlefontsize=10,
+            guidefontsize=9,
+            tickfontsize=8,
+            legendfontsize=8,
         )
     end
 end
 
 function misspecification_figure(rows, settings)
-    let backends=(:centralized, :scribe, :independent, :naive_sum),
+    let backends=(:centralized, :scribe, :kf_only, :ci_only, :independent),
         rmse=publication_metric_plot(
             rows,
             backends,
             :rmse,
-            "Field accuracy under model mismatch",
-            "RMSE",
+            "Field Reconstruction under Model Mismatch",
+            "RMSE [normalized field units]",
         ),
         normalized_rmse=publication_metric_plot(
             rows,
             backends,
             :normalized_rmse,
-            "Normalized field accuracy",
-            "NRMSE",
+            "Normalized Field Reconstruction Error",
+            "NRMSE [unitless]",
         ),
         log_likelihood=publication_metric_plot(
             rows,
             backends,
             :predictive_log_likelihood,
-            "Predictive log likelihood",
-            "mean log p(y)",
+            "Predictive Log Likelihood",
+            "Mean log p(y) [nats]",
         ),
         coverage=publication_metric_plot(
             rows,
             backends,
             :interval_coverage,
-            "95% latent interval coverage",
-            "coverage",
+            "Posterior Calibration",
+            "95% Interval Coverage [%]";
+            transform=:percent,
         ),
         uncertainty=publication_metric_plot(
             rows,
             backends,
             :integrated_uncertainty,
-            "Integrated posterior uncertainty",
-            "mean field variance",
+            "Posterior Uncertainty",
+            "Mean Field Variance [normalized field units²]",
         ),
         consensus=publication_metric_plot(
             rows,
-            (:scribe, :independent, :naive_sum),
+            (:scribe, :kf_only, :ci_only, :independent),
             :prediction_consensus_rmse,
-            "Inter-agent agreement",
-            "log₁₀ pairwise prediction RMSE";
+            "Inter-Agent Disagreement",
+            "log₁₀(Prediction RMSE [normalized field units])";
             transform=:log10,
         )
-        hline!(coverage, [0.95]; color=:gray, linestyle=:dash, label=false)
+        hline!(coverage, [95.0]; color=:gray, linestyle=:dash, label=false)
         foreach(
             plot_object -> phase_boundaries!(plot_object, settings),
             (
@@ -286,8 +300,12 @@ function misspecification_figure(rows, settings)
             uncertainty,
             consensus;
             layout=(3, 2),
-            size=(1050, 1120),
+            size=(1200, 1200),
             margin=2 * Plots.mm,
+            titlefontsize=10,
+            guidefontsize=9,
+            tickfontsize=8,
+            legendfontsize=8,
         )
     end
 end

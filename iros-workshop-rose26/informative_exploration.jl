@@ -13,6 +13,8 @@ publication_exploration_settings(profile) = @match profile begin
         n_samples=108,
         lookahead=8,
         time_budget=0.10,
+        noise_variance=0.08,
+        process_variance=1e-10,
         animation_fps=4,
     )
     :smoke => (
@@ -22,6 +24,8 @@ publication_exploration_settings(profile) = @match profile begin
         n_samples=16,
         lookahead=3,
         time_budget=0.02,
+        noise_variance=0.08,
+        process_variance=1e-10,
         animation_fps=2,
     )
     _ => throw(ArgumentError("Use the `full` or `smoke` publication profile."))
@@ -270,7 +274,7 @@ function planning_publication_main(
         output_dir=joinpath(
             @__DIR__,
             "res",
-            "experiment_4",
+            "single_agent_diagnostic",
             String(profile),
         ),
         visualization=save_publication_exploration(

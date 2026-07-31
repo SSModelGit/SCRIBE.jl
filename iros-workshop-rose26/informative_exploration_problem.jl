@@ -121,7 +121,8 @@ function exploration_problem(settings)
             τ=[1.0],
             ϕ₀=zeros(nᵩ),
             A=Matrix{Float64}(I, nᵩ, nᵩ),
-            Q=1e-10 * Matrix{Float64}(I, nᵩ, nᵩ),
+            Q=settings.process_variance *
+                Matrix{Float64}(I, nᵩ, nᵩ),
         ),
         smodel=initialize_SCRIBEModel_from_parameters(parameters),
         Δ²=[
@@ -138,7 +139,7 @@ function exploration_problem(settings)
         initial_model=SCRIBEModelState(
             smodel,
             KFEnvInfo(zeros(nᵩ), Y, zeros(nᵩ), zeros(nᵩ, nᵩ)),
-            0.08,
+            settings.noise_variance,
         ),
         evaluation_axis=collect(
             range(-5.0, 5.0; length=settings.evaluation_points),

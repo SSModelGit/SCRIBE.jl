@@ -1,0 +1,6 @@
+/Manifest.toml
+/res
+*.tex
+*.pdf
+*.bib
+reference-latex/
