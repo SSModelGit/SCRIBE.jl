@@ -66,6 +66,7 @@ struct SCRIBEAgent
 end
 
 include("kalman_estimation.jl")
+include("eofclimatemodels.jl")
 include("model_prediction.jl")
 include("model_visualization.jl")
 

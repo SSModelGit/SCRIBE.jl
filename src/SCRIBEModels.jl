@@ -10,6 +10,7 @@ using LinearAlgebra: norm, I, ⋅, rank
 
 Currently defined types:
     - `LGSFModelParameters`
+    - `EOFClimateModelParameters`
 """
 abstract type SCRIBEModelParameters end
 
@@ -27,6 +28,7 @@ end
 
 Currently defined model types:
     - `LGSFModel`
+    - `EOFClimateModel`
 """
 abstract type SCRIBEModel end
 
@@ -58,6 +60,7 @@ This can include:
 
 Currently defined observer behavior types:
     - `LGSFObserverBehavior`
+    - `EOFObserverBehavior`
 """
 abstract type SCRIBEObserverBehavior end
 
@@ -67,6 +70,7 @@ This is notably the state *after* observations have been collected.
 
 Currently defined observer state types:
     - `LGSFObserverState`
+    - `EOFObserverState`
 """
 abstract type SCRIBEObserverState end
 

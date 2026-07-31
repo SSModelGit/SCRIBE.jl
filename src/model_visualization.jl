@@ -50,6 +50,26 @@ function SCRIBEVisualizationGrid(
     state::SCRIBEModelState;
     n_points=51,
 )
+    if state.smodel isa EOFClimateModel
+        locations = state.smodel.params.locations
+        size(locations, 2) >= 2 ||
+            throw(ArgumentError(
+                "One-dimensional EOF models require an explicit " *
+                "SCRIBEVisualizationGrid.",
+            ))
+        x = collect(range(
+            minimum(locations[:, 1]),
+            maximum(locations[:, 1]);
+            length=n_points,
+        ))
+        y = collect(range(
+            minimum(locations[:, 2]),
+            maximum(locations[:, 2]);
+            length=n_points,
+        ))
+        return SCRIBEVisualizationGrid(x, y)
+    end
+
     let centers=state.smodel.params.p[:μ],
         x=collect(range(
             minimum(centers[:, 1]),
@@ -213,6 +233,18 @@ function realized_observation(
     )
 end
 
+function realized_observation(
+    observation::EOFObserverState,
+    _,
+    _,
+)
+    SCRIBEObservation(
+        observation.X,
+        observation.z,
+        observation.v[:R],
+    )
+end
+
 function realized_observation(observation, sampling_location, R)
     SCRIBEObservation(sampling_location, observation, R)
 end
@@ -270,8 +302,8 @@ end
 
 """Build visualization history from observations and an initial model.
 
-`SCRIBEObservation` and `LGSFObserverState` entries carry their own filtering
-locations. Raw measurement values use the corresponding entry in
+`SCRIBEObservation`, `LGSFObserverState`, and `EOFObserverState` entries carry
+their own filtering locations. Raw measurement values use the corresponding entry in
 `sampling_locations`. Sampling locations are only drawn as a path when they
 are explicitly supplied.
 """

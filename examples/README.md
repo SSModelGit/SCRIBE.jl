@@ -1,5 +1,29 @@
 # SCRIBE examples
 
+## EOF climate model from ROMS
+
+`roms_eof_climate_model.jl` demonstrates the user-defined
+`eof_model_data_loader` contract on the RAMS Head ROMS velocity archive under
+`bigdata/`. The example removes the archive's all-NaN land rows, samples the
+hourly history at a configurable interval, learns a fixed EOF basis and linear
+coefficient dynamics, and saves the complete learned model to a reusable
+MATLAB artifact.
+
+From the repository root, run:
+
+```sh
+julia --project=. examples/roms_eof_climate_model.jl
+```
+
+The default profile learns 12 EOFs from up to 720 daily `u`-velocity
+snapshots. It writes the learned `.mat` artifact, variance spectrum, first EOF,
+and coefficient histories under `examples/res/eof_roms/`. The loader is kept
+in the example because file variables, land masks, time selection, physical
+weights, and multivariate stacking are dataset-specific responsibilities.
+This particular archive does not contain ROMS `pm`, `pn`, or cell-volume
+metrics, so the example uses uniform spatial weights; production loaders
+should pass area or volume weights when those metrics are available.
+
 ## Information-based exploration with VulcanJ
 
 `vulcan_scribe_exploration.jl` uses a SCRIBE Gaussian scalar field as the

@@ -166,13 +166,13 @@ struct KFEstimators <: EnvEstimators
                      Y::Function, y::Function) = new(system, A, ϕ, Q, H, z, R, Y, y)
 end
 
-"""Instantiates some simple estimator functions for the LGSF model.
+"""Instantiates estimator functions for the LGSF model.
 
 Note that the observation matrix H must be seperately computed each timestep.
 The `H` used here is the current agent approximation of the true observation matrix.
 
-The initialization will dispatch on the params type.
-Currently, only the LGSFModelParameters are implemented.
+The initialization dispatches on the parameter type. The EOF backend provides
+its corresponding specialization in `eofclimatemodels.jl`.
 """
 function initialize_estimators(system::KFEnvScribe, params::LGSFModelParameters)
     get_A(k, system) = system.estimates[k].estimate.params.A
