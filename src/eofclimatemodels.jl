@@ -12,16 +12,17 @@ import .SCRIBEModels:
 
 export EOFDecomposition, EOFClimateModelParameters, EOFClimateModel
 export EOFObserverBehavior, EOFObserverState
-export eof_model_data_loader, fit_eof_decomposition, fit_eof_dynamics
+export eof_model_data_loader, fit_eof_decomposition
 export initialize_eof_climate_model, save_eof_model
 export load_eof_model_parameters, load_eof_climate_model
+export eof_mean, eof_modes, eof_process_covariance, eof_residual_variance
 export eof_interpolation_matrix, eof_basis_at, eof_mean_at
 export eof_residual_variance_at, eof_effective_measurement_covariance
 export reconstruct_eof_field, eof_variance_fraction
 export eof_mode_values, eof_mode_grid
 export plot_eof_spectrum, plot_eof_mode, plot_eof_coefficients
 
-const EOF_MODEL_FORMAT_VERSION = 1
+const EOF_MODEL_FORMAT_VERSION = 3
 
 # ---------------------------------------------------------------------------
 # Part I: offline EOF learning and persistence
@@ -38,8 +39,8 @@ The returned matrix must have shape `(n_features, n_snapshots)`:
 
   * each column is the complete environmental state at one time;
   * each row is the same scalar field component/grid location at every time;
-  * snapshots must be in chronological order if coefficient dynamics are to be
-    learned;
+  * chronological order should be retained so the stored coefficient history
+    can be interpreted and the archive's temporal coverage can be audited;
   * all entries must be finite. Land cells, fill values, and missing values must
     be removed or imputed by the loader;
   * row ordering must agree with the `locations` and optional `weights` passed
@@ -215,7 +216,7 @@ function selected_eof_rank(
     end
     0.0 < variance_fraction <= 1.0 ||
         throw(ArgumentError("variance_fraction must lie in (0, 1]."))
-    cumulative = cumsum(abs2, singular_values) ./ total_variance
+    cumulative = cumsum(abs2.(singular_values)) ./ total_variance
     selected = findfirst(>=(variance_fraction), cumulative)
     isnothing(selected) &&
         throw(ArgumentError(
@@ -328,55 +329,41 @@ function fit_eof_decomposition(
     )
 end
 
-"""
-    fit_eof_dynamics(coefficients; ridge=0, covariance_floor=1e-10)
-
-Fit `ϕ[k+1] = A*ϕ[k] + w[k]`, `w ~ N(0,Q)`, from chronological
-EOF coefficient columns. `ridge` regularizes the lag-zero covariance.
-"""
-function fit_eof_dynamics(
-    coefficients::AbstractMatrix{<:Real};
-    ridge::Real=0.0,
-    covariance_floor::Real=1e-10,
-    max_spectral_radius::Union{Nothing, Real}=nothing,
-)
-    r, n = size(coefficients)
-    r > 0 || throw(ArgumentError("Coefficient history has no modes."))
-    n >= 2 ||
-        throw(ArgumentError("At least two coefficient snapshots are required."))
-    ridge >= 0.0 || throw(ArgumentError("ridge must be nonnegative."))
-    covariance_floor > 0.0 ||
-        throw(ArgumentError("covariance_floor must be positive."))
-
-    previous = Matrix{Float64}(coefficients[:, 1:(end - 1)])
-    following = Matrix{Float64}(coefficients[:, 2:end])
-    gram = previous * previous' +
-        ridge * Matrix{Float64}(I, r, r)
-    A = (following * previous') / Symmetric(gram)
-
-    if !isnothing(max_spectral_radius)
-        0.0 < max_spectral_radius <= 1.0 ||
-            throw(ArgumentError("max_spectral_radius must lie in (0, 1]."))
-        radius = maximum(abs, eigvals(A))
-        radius > max_spectral_radius &&
-            (A .*= max_spectral_radius / radius)
+function eof_covariance_matrix(covariance, r::Integer, name::AbstractString)
+    matrix = if covariance isa Number
+        Float64(covariance) .* Matrix{Float64}(I, r, r)
+    elseif covariance isa AbstractVector
+        length(covariance) == r ||
+            throw(DimensionMismatch("$name must contain $r diagonal entries."))
+        Matrix(Diagonal(Float64.(covariance)))
+    else
+        Matrix{Float64}(covariance)
     end
-
-    residuals = following - A * previous
-    Q = residuals * residuals' / size(residuals, 2)
-    Q = Matrix(Symmetric((Q + Q') / 2))
-    Q .+= covariance_floor .* Matrix{Float64}(I, r, r)
-    (A=A, Q=Q, residuals=residuals)
+    size(matrix) == (r, r) ||
+        throw(DimensionMismatch("$name must be $r×$r."))
+    all(isfinite, matrix) ||
+        throw(ArgumentError("$name must contain only finite values."))
+    matrix = Matrix(Symmetric((matrix + matrix') / 2))
+    tolerance = sqrt(eps(Float64)) * max(opnorm(matrix), 1.0)
+    eigmin(Symmetric(matrix)) >= -tolerance ||
+        throw(ArgumentError("$name must be positive semidefinite."))
+    matrix
 end
 
-"""Fixed EOF parameters and learned coefficient dynamics used by SCRIBE."""
+"""A fixed EOF model space and a noise-permissive coefficient prior.
+
+The retained mean and EOF modes define the model space. Online coefficients
+follow the structural random walk `ϕ[k+1] = ϕ[k] + w[k]`, with
+`w[k] ~ N(0, Q)`. `Q` is an operational modeling choice supplied by the user;
+it is not fitted as a directional temporal law from the offline coefficient
+history.
+"""
 struct EOFClimateModelParameters <: SCRIBEModelParameters
     nᵩ::Int
     decomposition::EOFDecomposition
     locations::Matrix{Float64}
     ϕ₀::Vector{Float64}
     P₀::Matrix{Float64}
-    A::Matrix{Float64}
     Q::Matrix{Float64}
     interpolation::Symbol
     interpolation_neighbors::Int
@@ -387,7 +374,6 @@ struct EOFClimateModelParameters <: SCRIBEModelParameters
         locations,
         ϕ₀,
         P₀,
-        A,
         Q,
         interpolation,
         interpolation_neighbors,
@@ -406,23 +392,22 @@ struct EOFClimateModelParameters <: SCRIBEModelParameters
 
         initial = Vector{Float64}(ϕ₀)
         initial_covariance = Matrix{Float64}(P₀)
-        transition = Matrix{Float64}(A)
-        process_covariance = Matrix{Float64}(Q)
         length(initial) == r ||
             throw(DimensionMismatch("ϕ₀ must contain $r coefficients."))
+        all(isfinite, initial) ||
+            throw(ArgumentError("ϕ₀ must contain only finite values."))
         size(initial_covariance) == (r, r) ||
             throw(DimensionMismatch("P₀ must be $r×$r."))
-        size(transition) == (r, r) ||
-            throw(DimensionMismatch("A must be $r×$r."))
-        size(process_covariance) == (r, r) ||
-            throw(DimensionMismatch("Q must be $r×$r."))
-
+        all(isfinite, initial_covariance) ||
+            throw(ArgumentError("P₀ must contain only finite values."))
         initial_covariance =
             Matrix(Symmetric((initial_covariance + initial_covariance') / 2))
-        process_covariance =
-            Matrix(Symmetric((process_covariance + process_covariance') / 2))
         cholesky(Symmetric(initial_covariance); check=true)
-        cholesky(Symmetric(process_covariance); check=true)
+        process_covariance = eof_covariance_matrix(
+            Q,
+            r,
+            "process_covariance",
+        )
         interpolation in (:nearest, :inverse_distance) ||
             throw(ArgumentError(
                 "interpolation must be :nearest or :inverse_distance.",
@@ -436,7 +421,6 @@ struct EOFClimateModelParameters <: SCRIBEModelParameters
             locations_matrix,
             initial,
             initial_covariance,
-            transition,
             process_covariance,
             interpolation,
             Int(interpolation_neighbors),
@@ -448,46 +432,34 @@ end
 default_eof_locations(n_features) =
     reshape(collect(1.0:n_features), :, 1)
 
+"""
+    EOFClimateModelParameters(decomposition; process_covariance, kwargs...)
+
+Construct the shared SCRIBE parameters for a fixed EOF space.
+`process_covariance` is the random-walk covariance per model update and is
+required explicitly. A scalar creates `qI`, a vector creates a diagonal
+covariance, and a matrix supplies the full coefficient covariance. The default
+initial coefficient is zero, the coordinate of the learned mean field; the
+default initial covariance is the retained archival coefficient covariance.
+"""
 function EOFClimateModelParameters(
     decomposition::EOFDecomposition;
+    process_covariance,
     locations=default_eof_locations(length(decomposition.mean)),
     ϕ₀=zeros(length(decomposition.eigenvalues)),
     prior_covariance=Matrix(Diagonal(max.(
         decomposition.eigenvalues,
         eps(Float64),
     ))),
-    A=nothing,
-    Q=nothing,
-    dynamics_ridge::Real=0.0,
-    covariance_floor::Real=1e-10,
-    max_spectral_radius::Union{Nothing, Real}=nothing,
     interpolation::Symbol=:inverse_distance,
     interpolation_neighbors::Integer=4,
     metadata=Dict{String, Any}(),
 )
-    learned_dynamics = if isnothing(A) || isnothing(Q)
-        isempty(decomposition.coefficients) &&
-            throw(ArgumentError(
-                "A and Q are required when the coefficient history is absent.",
-            ))
-        fit_eof_dynamics(
-            decomposition.coefficients;
-            ridge=dynamics_ridge,
-            covariance_floor,
-            max_spectral_radius,
-        )
-    else
-        nothing
-    end
-    transition = isnothing(A) ? learned_dynamics.A : A
-    process_covariance = isnothing(Q) ? learned_dynamics.Q : Q
-
     EOFClimateModelParameters(
         decomposition,
         locations,
         ϕ₀,
         prior_covariance,
-        transition,
         process_covariance,
         interpolation,
         interpolation_neighbors,
@@ -495,8 +467,16 @@ function EOFClimateModelParameters(
     )
 end
 
+"""
+    EOFClimateModelParameters(data; process_covariance, kwargs...)
+
+Fit an `EOFDecomposition` from the snapshot columns in `data`, then construct
+the corresponding random-walk SCRIBE parameters. No lagged coefficient model
+is fitted from the snapshot ordering.
+"""
 function EOFClimateModelParameters(
     data::AbstractMatrix{<:Real};
+    process_covariance,
     locations=default_eof_locations(size(data, 1)),
     weights=nothing,
     rank::Union{Nothing, Integer}=nothing,
@@ -506,7 +486,11 @@ function EOFClimateModelParameters(
     oversample::Integer=10,
     power_iterations::Integer=1,
     rng::AbstractRNG=default_rng(),
-    kwargs...,
+    ϕ₀=nothing,
+    prior_covariance=nothing,
+    interpolation::Symbol=:inverse_distance,
+    interpolation_neighbors::Integer=4,
+    metadata=Dict{String, Any}(),
 )
     decomposition = fit_eof_decomposition(
         data;
@@ -519,8 +503,27 @@ function EOFClimateModelParameters(
         power_iterations,
         rng,
     )
-    EOFClimateModelParameters(decomposition; locations, kwargs...)
+    initial = isnothing(ϕ₀) ? zeros(length(decomposition.eigenvalues)) : ϕ₀
+    initial_covariance = isnothing(prior_covariance) ?
+        Matrix(Diagonal(max.(decomposition.eigenvalues, eps(Float64)))) :
+        prior_covariance
+    EOFClimateModelParameters(
+        decomposition;
+        process_covariance,
+        locations,
+        ϕ₀=initial,
+        prior_covariance=initial_covariance,
+        interpolation,
+        interpolation_neighbors,
+        metadata,
+    )
 end
+
+eof_mean(params::EOFClimateModelParameters) = params.decomposition.mean
+eof_modes(params::EOFClimateModelParameters) = params.decomposition.modes
+eof_process_covariance(params::EOFClimateModelParameters) = params.Q
+eof_residual_variance(params::EOFClimateModelParameters) =
+    params.decomposition.residual_variance
 
 """A SCRIBE system snapshot represented in a fixed EOF basis."""
 struct EOFClimateModel <: SCRIBEModel
@@ -529,11 +532,14 @@ struct EOFClimateModel <: SCRIBEModel
     ϕ::Vector{Float64}
 
     function EOFClimateModel(k::Integer, params, ϕ)
+        k >= 1 || throw(ArgumentError("EOF model time must be positive."))
         coefficients = Vector{Float64}(ϕ)
         length(coefficients) == params.nᵩ ||
             throw(DimensionMismatch(
                 "EOF state needs $(params.nᵩ) coefficients.",
             ))
+        all(isfinite, coefficients) ||
+            throw(ArgumentError("EOF coefficients must be finite."))
         new(Int(k), params, coefficients)
     end
 end
@@ -551,7 +557,7 @@ end
     initialize_eof_climate_model(source; loader_kwargs=(;), kwargs...)
 
 Load a user-defined environmental source with `eof_model_data_loader`, learn
-the EOF artifact, fit coefficient dynamics, and initialize the runtime model.
+the fixed EOF space, and initialize its random-walk runtime model.
 All keywords other than `loader_kwargs` and `k` are forwarded to
 `EOFClimateModelParameters`.
 """
@@ -575,7 +581,7 @@ function eof_artifact_dictionary(
     include_coefficients::Bool=true,
 )
     decomposition = params.decomposition
-    Dict{String, Any}(
+    artifact = Dict{String, Any}(
         "scribe_eof_format_version" => EOF_MODEL_FORMAT_VERSION,
         "mean" => decomposition.mean,
         "modes" => decomposition.modes,
@@ -591,12 +597,12 @@ function eof_artifact_dictionary(
         "locations" => params.locations,
         "phi0" => params.ϕ₀,
         "prior_covariance" => params.P₀,
-        "transition" => params.A,
         "process_covariance" => params.Q,
         "interpolation" => String(params.interpolation),
         "interpolation_neighbors" => params.interpolation_neighbors,
         "metadata" => params.metadata,
     )
+    artifact
 end
 
 """
@@ -670,15 +676,30 @@ function load_eof_model_parameters(path::AbstractString)
     )
 
     EOFClimateModelParameters(
-        decomposition,
-        required_artifact_value(artifact, "locations"),
-        vec(required_artifact_value(artifact, "phi0")),
-        required_artifact_value(artifact, "prior_covariance"),
-        required_artifact_value(artifact, "transition"),
-        required_artifact_value(artifact, "process_covariance"),
-        Symbol(required_artifact_value(artifact, "interpolation")),
-        Int(required_artifact_value(artifact, "interpolation_neighbors")),
-        artifact_metadata(get(artifact, "metadata", Dict{String, Any}())),
+        decomposition;
+        process_covariance=required_artifact_value(
+            artifact,
+            "process_covariance",
+        ),
+        locations=required_artifact_value(artifact, "locations"),
+        ϕ₀=vec(required_artifact_value(artifact, "phi0")),
+        prior_covariance=required_artifact_value(
+            artifact,
+            "prior_covariance",
+        ),
+        interpolation=Symbol(required_artifact_value(
+            artifact,
+            "interpolation",
+        )),
+        interpolation_neighbors=Int(required_artifact_value(
+            artifact,
+            "interpolation_neighbors",
+        )),
+        metadata=artifact_metadata(get(
+            artifact,
+            "metadata",
+            Dict{String, Any}(),
+        )),
     )
 end
 
@@ -695,20 +716,31 @@ function initialize_SCRIBEModel_from_parameters(
     params::EOFClimateModelParameters;
     k=1,
 )
-    EOFClimateModel(k, params, params.ϕ₀)
+    EOFClimateModel(k, params, copy(params.ϕ₀))
 end
 
 get_model_time(model::EOFClimateModel) = model.k
 
+eof_mean(model::EOFClimateModel) = eof_mean(model.params)
+eof_modes(model::EOFClimateModel) = eof_modes(model.params)
+eof_process_covariance(model::EOFClimateModel) =
+    eof_process_covariance(model.params)
+eof_residual_variance(model::EOFClimateModel) =
+    eof_residual_variance(model.params)
+
+function sample_eof_process_noise(
+    Q::AbstractMatrix{<:Real};
+    rng::AbstractRNG=default_rng(),
+)
+    factor = eigen(Symmetric(Matrix{Float64}(Q)))
+    factor.vectors * (sqrt.(max.(factor.values, 0.0)) .* randn(rng, size(Q, 1)))
+end
+
 function update_SCRIBEModel(model::EOFClimateModel)
-    process_noise = rand(Gaussian(
-        zeros(model.params.nᵩ),
-        model.params.Q,
-    ))
     EOFClimateModel(
         model.k + 1,
         model.params,
-        model.params.A * model.ϕ + process_noise,
+        model.ϕ + sample_eof_process_noise(model.params.Q),
     )
 end
 
@@ -810,17 +842,17 @@ end
 
 function eof_basis_at(model::EOFClimateModel, X)
     eof_interpolation_matrix(model.params, X) *
-        model.params.decomposition.modes
+        eof_modes(model)
 end
 
 function eof_mean_at(model::EOFClimateModel, X)
     eof_interpolation_matrix(model.params, X) *
-        model.params.decomposition.mean
+        eof_mean(model)
 end
 
 function eof_residual_variance_at(model::EOFClimateModel, X)
     interpolation = eof_interpolation_matrix(model.params, X)
-    abs2.(interpolation) * model.params.decomposition.residual_variance
+    abs2.(interpolation) * eof_residual_variance(model)
 end
 
 function eof_effective_measurement_covariance(
@@ -876,12 +908,55 @@ function scribe_observations(
     )
 end
 
+"""
+Scribe externally supplied environmental data against a fixed EOF model.
+`measurement.z` remains the raw field value; the climatological mean is stored
+separately and removed by the EOF information-filter dispatch. When enabled,
+the learned truncation variance is added to the supplied sensor covariance.
+"""
+function scribe_observations(
+    measurement::SensorObservation,
+    model::EOFClimateModel,
+    behavior::EOFObserverBehavior,
+)
+    measurement.k == model.k ||
+        throw(ArgumentError(
+            "Observation time $(measurement.k) does not match model time " *
+            "$(model.k).",
+        ))
+    X = measurement.X
+    n_samples = length(measurement.z)
+    H = eof_basis_at(model, X)
+    mean_values = eof_mean_at(model, X)
+    sensor_covariance = isnothing(measurement.R) ?
+        behavior.variance .* Matrix{Float64}(I, n_samples, n_samples) :
+        measurement.R
+    R = eof_effective_measurement_covariance(
+        model,
+        X,
+        sensor_covariance;
+        include_truncation_error=behavior.include_truncation_error,
+    )
+    EOFObserverState(
+        measurement.k,
+        n_samples,
+        X,
+        H,
+        mean_values,
+        Dict{Symbol, AbstractArray{Float64}}(
+            :R => R,
+            :R_sensor => Matrix(sensor_covariance),
+            :k => zeros(n_samples),
+        ),
+        copy(measurement.z),
+    )
+end
+
 function reconstruct_eof_field(
     model::EOFClimateModel;
     coefficients=model.ϕ,
 )
-    model.params.decomposition.mean +
-        model.params.decomposition.modes * coefficients
+    eof_mean(model) + eof_modes(model) * coefficients
 end
 
 function predict_SCRIBEModel(model::EOFClimateModel, X)
@@ -894,6 +969,7 @@ end
 function init_agent_info(
     params::EOFClimateModelParameters;
     prior_covariance::Union{Nothing, AbstractMatrix{<:Real}}=nothing,
+    model_time::Integer=1,
 )
     P₀ = isnothing(prior_covariance) ?
         params.P₀ :
@@ -917,7 +993,10 @@ function initialize_estimators(
     system::KFEnvScribe,
     params::EOFClimateModelParameters,
 )
-    get_A(k, system) = system.estimates[k].estimate.params.A
+    A = Matrix{Float64}(I, params.nᵩ, params.nᵩ)
+    b = zeros(params.nᵩ)
+    get_A(_, _) = A
+    get_b(_, _) = b
     get_ϕ(k, system) = system.estimates[k].estimate.ϕ
     get_Q(_, _) = params.Q
     get_H(k, system) = system.estimates[k].observations.H
@@ -931,6 +1010,7 @@ function initialize_estimators(
     KFEstimators(
         system,
         k -> get_A(k, system),
+        k -> get_b(k, system),
         k -> get_ϕ(k, system),
         k -> get_Q(k, system),
         k -> get_H(k, system),
@@ -947,13 +1027,13 @@ function posterior_model_moments(
     X,
 )
     interpolation = eof_interpolation_matrix(model.params, X)
-    H = interpolation * model.params.decomposition.modes
+    H = interpolation * eof_modes(model)
     coefficients = posterior_coefficient_moments(info)
-    μ = interpolation * model.params.decomposition.mean +
+    μ = interpolation * eof_mean(model) +
         H * coefficients.μ
     resolved_covariance = H * coefficients.Σ * H'
     residual_variance =
-        abs2.(interpolation) * model.params.decomposition.residual_variance
+        abs2.(interpolation) * eof_residual_variance(model)
     Σ = resolved_covariance + Diagonal(residual_variance)
     (μ=μ, Σ=prediction_symmetric(Σ))
 end

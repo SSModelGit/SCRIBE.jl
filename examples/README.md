@@ -2,27 +2,103 @@
 
 ## EOF climate model from ROMS
 
-`roms_eof_climate_model.jl` demonstrates the user-defined
-`eof_model_data_loader` contract on the RAMS Head ROMS velocity archive under
-`bigdata/`. The example removes the archive's all-NaN land rows, samples the
-hourly history at a configurable interval, learns a fixed EOF basis and linear
-coefficient dynamics, and saves the complete learned model to a reusable
-MATLAB artifact.
+The examples under `eof-climate-models/` separate offline model construction
+from online agent operation. The private `_roms_data.jl` helper keeps its three
+jobs explicit: read the MATLAB arrays, prepare wet-cell EOF snapshots, and
+serve one prepared snapshot as location-indexed recorded observations.
 
-From the repository root, run:
+First, learn the static EOF eigen-model space from the RAMS Head ROMS archive,
+declare its coefficient process covariance, and save the complete
+`EOFClimateModel` artifact:
 
 ```sh
-julia --project=. examples/roms_eof_climate_model.jl
+julia --project=. \
+    examples/eof-climate-models/construct_roms_eof_model.jl
 ```
 
-The default profile learns 12 EOFs from up to 720 daily `u`-velocity
-snapshots. It writes the learned `.mat` artifact, variance spectrum, first EOF,
-and coefficient histories under `examples/res/eof_roms/`. The loader is kept
-in the example because file variables, land masks, time selection, physical
-weights, and multivariate stacking are dataset-specific responsibilities.
-This particular archive does not contain ROMS `pm`, `pn`, or cell-volume
-metrics, so the example uses uniform spatial weights; production loaders
-should pass area or volume weights when those metrics are available.
+Then load that artifact and assimilate recorded ROMS measurements during
+agent operation:
+
+```sh
+julia --project=. \
+    examples/eof-climate-models/online_roms_eof_model.jl
+```
+
+The first example writes `rams_head_u_eof.mat` under
+`examples/res/eof-climate-models/offline/`. By default it samples the full archive at
+a three-hour cadence, uses the first 80% as a chronological learning window,
+and retains the smallest rank reaching 99.5% of anomaly variance. The EOF
+basis and mean remain fixed. Online coefficients use an identity random-walk
+prior with a declared `Q`; no transition matrix, forcing vector, or temporal
+schedule is learned from the archive. The example's `process_variance` is the
+coefficient variance admitted per selected update interval and should be
+redeclared when the operational cadence or expected rate of change differs.
+It also writes three 4×4 diagnostic figures. Each consecutive pair shows one
+of eight training snapshots beside its best-fit reconstruction, posterior
+field-covariance diagonal, or pointwise percent relative error. The posterior
+variance uses a full-field observation variance of `1e-4`; because observation
+geometry and covariance are fixed, the linear-Gaussian posterior covariance is
+the same for all eight snapshots even though their reconstructed means differ.
+
+The second example runs four coefficient-learning demonstrations. Each fixes
+the environment at one ROMS snapshot, initializes the SCRIBE coefficient mean
+at the best-fit coordinate of a different snapshot, and gathers 400 sparse
+measurements along a serpentine agent trajectory. The ground truth is supplied
+directly through a `DataObserver`; no separate ground-truth `SCRIBEModel` is
+constructed. Each scenario writes a side-by-side truth/posterior animation and
+a full-field RMSE curve under its own directory in
+`examples/res/eof-climate-models/online/`. Each directory also contains a
+one-row comparison of the ground truth, deliberately wrong prior
+reconstruction, and final posterior reconstruction. The animation starts at
+sample zero, so its first posterior panel is the unconditioned prior.
+Subsequent frames show the ordinary SCRIBE information-filter updates pulling
+the coefficient vector toward the fixed truth coordinate.
+
+The online demonstration isolates state identification within the learned EOF
+space. It is not a temporal forecast: the selected truth snapshot remains fixed
+while the agent explores it. Chronological held-out projection remains a
+separate offline basis-validation calculation.
+Extending it to multiple agents only requires creating one estimator per agent
+and connecting those agents through SCRIBE's distributed fusion protocol; the
+EOF model and observer code do not change.
+
+This archive does not contain ROMS `pm`, `pn`, or cell-volume metrics, so the
+example uses uniform spatial weights. Production loaders should normally pass
+area or volume weights when those metrics are available.
+
+## Data-backed SCRIBE observations
+
+SCRIBE can pull observations from an external sensor or recorded data without
+constructing a ground-truth `SCRIBEModel`. Wrap a callable data source together
+with the observer behavior for the agent's model:
+
+```julia
+sensor = (k, X) -> read_sensor_values(k, X)
+observer = DataObserver(sensor, EOFObserverBehavior(1e-4))
+estimators = initialize_KF(eof_parameters, observer, initial_locations)
+```
+
+The callback may return either a vector of values or a `SensorObservation`
+with an explicit covariance. `initialize_KF` creates the agent's
+`EOFClimateModel` through `initialize_SCRIBEModel_from_parameters`, and
+`scribe_observations` converts the sensor result into an `EOFObserverState`.
+After the agent's local information-filter update, pull the next observation:
+
+```julia
+information = information_filter_update(estimators, k)
+progress_agent_env_filter(estimators.system, information, next_locations)
+```
+
+For distributed agents, consensus inserts the next information state, so the
+corresponding call is:
+
+```julia
+progress_agent_env_filter(agent, next_locations)
+```
+
+Pre-collected data can instead be pushed explicitly with
+`SensorObservation(k, X, z; covariance=R)` at initialization and progression.
+The original model-backed overloads remain available for simulations.
 
 ## Information-based exploration with VulcanJ
 

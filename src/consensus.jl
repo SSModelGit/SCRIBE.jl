@@ -419,3 +419,34 @@ function progress_agent_env_filter(agent::KFEnvScribe, world::SCRIBEModel,
     next_agent_state(agent, ϕₖ, world, X)
     next_agent_time(agent)
 end
+
+"""Advance a distributed data-backed filter and pull its next observation."""
+function progress_agent_env_filter(
+    agent::KFEnvScribe,
+    X::Matrix{Float64},
+)
+    agent.bhv isa DataObserver ||
+        throw(ArgumentError(
+            "Location-only progression requires a DataObserver.",
+        ))
+    ϕₖ = recover_estimate_from_info(agent, agent.k + 1)
+    next_agent_state(agent, ϕₖ, X)
+    next_agent_time(agent)
+end
+
+"""Advance a distributed filter with a pre-collected sensor measurement."""
+function progress_agent_env_filter(
+    agent::KFEnvScribe,
+    measurement::SensorObservation,
+)
+    expected_time =
+        get_model_time(agent.estimates[agent.k].estimate) + 1
+    measurement.k == expected_time ||
+        throw(ArgumentError(
+            "Expected a time-$expected_time observation; received time " *
+            "$(measurement.k).",
+        ))
+    ϕₖ = recover_estimate_from_info(agent, agent.k + 1)
+    next_agent_state(agent, ϕₖ, measurement)
+    next_agent_time(agent)
+end

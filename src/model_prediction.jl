@@ -67,6 +67,9 @@ function measurement_noise_covariance(observer::LGSFObserverBehavior,
     measurement_noise_covariance(observer.v_s[:σ], nₛ)
 end
 
+measurement_noise_covariance(observer::DataObserver, nₛ) =
+    measurement_noise_covariance(observer.behavior, nₛ)
+
 """Return the Cholesky factorization of a positive-definite matrix."""
 factor_positive_definite(M) =
     cholesky(Symmetric(prediction_symmetric(M)); check=false)

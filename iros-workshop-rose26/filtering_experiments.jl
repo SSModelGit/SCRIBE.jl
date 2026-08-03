@@ -482,19 +482,6 @@ function fusion_step!(
     )
 end
 
-function local_information_update(estimators, k)
-    let (Y⁻, y⁻)=compute_info_priors(estimators, k),
-        (δI, δi)=compute_innov_from_obs(estimators, k),
-        Y=(Y⁻ + δI)
-        KFEnvInfo(
-            y⁻ + δi,
-            (Y + Y') / 2,
-            δi,
-            δI,
-        )
-    end
-end
-
 function fusion_step!(
     ::IndependentFusion,
     ng,
@@ -505,7 +492,7 @@ function fusion_step!(
     foreach(values(ng.vertices)) do vertex
         next_agent_info_state(
             vertex.agent,
-            local_information_update(vertex.estimators, k),
+            information_filter_update(vertex.estimators, k),
         )
     end
     finish_publication_step!(ng)
@@ -555,7 +542,7 @@ end
 
 function covariance_intersection_component_update!(component, ng, k)
     local_posteriors = [
-        local_information_update(ng.vertices[aid].estimators, k)
+        information_filter_update(ng.vertices[aid].estimators, k)
         for aid in component
     ]
     weights = SCRIBE.covariance_intersection_weights(

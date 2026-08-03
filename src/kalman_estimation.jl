@@ -1,9 +1,7 @@
-using Combinatorics: combinations
-using Statistics: mean
-
 export KFEnvInfo, KFEnvScribe, initialize_scribe, next_agent_state, next_agent_time, next_agent_info_state
 export KFEstimators, initialize_estimators, compute_info_priors, compute_innov_from_obs
-export centralized_fusion, recover_estimate_from_info, progress_agent_env_filter, initialize_KF
+export information_filter_update, recover_estimate_from_info
+export progress_agent_env_filter, initialize_KF
 
 """Current discrete-time estimate of the linear system being observed.
 
@@ -18,6 +16,7 @@ struct KFEnvEstimate
     end
 end
 
+"""Initialize an estimate and acquire its observation from a simulated world."""
 function init_agent_estimate(world::SCRIBEModel, k::Integer,
                              params::SCRIBEModelParameters, bhv::SCRIBEObserverBehavior,
                              X::VecOrMat{Float64})
@@ -25,11 +24,37 @@ function init_agent_estimate(world::SCRIBEModel, k::Integer,
                      scribe_observations(X,world,bhv))
 end
 
-# function new_agent_estimate(k::Integer,
-#                             old_estimate::SCRIBEModel, ϕₖ::Vector{Float64},
-#                             world::SCRIBEModel, bhv::SCRIBEObserverBehavior, X::Matrix{Float64})
-#     KFEnvEstimate(k, update_SCRIBEModel(old_estimate, ϕₖ), scribe_observations(X, world, bhv))
-# end
+"""Initialize an estimate by pulling an observation from external data."""
+function init_agent_estimate(
+    params::SCRIBEModelParameters,
+    observer::DataObserver,
+    X::Matrix{Float64},
+    model_time::Integer=1,
+)
+    model = initialize_SCRIBEModel_from_parameters(params; k=model_time)
+    KFEnvEstimate(
+        model_time,
+        model,
+        scribe_observations(X, model, observer),
+    )
+end
+
+"""Initialize an estimate from a measurement already acquired by a sensor."""
+function init_agent_estimate(
+    params::SCRIBEModelParameters,
+    behavior::SCRIBEObserverBehavior,
+    measurement::SensorObservation,
+)
+    model = initialize_SCRIBEModel_from_parameters(params; k=measurement.k)
+    model_behavior = behavior isa DataObserver ?
+        behavior.behavior :
+        behavior
+    KFEnvEstimate(
+        measurement.k,
+        model,
+        scribe_observations(measurement, model, model_behavior),
+    )
+end
 
 """Current discrete-time information.
 
@@ -67,7 +92,8 @@ excluded here: the observation at `k=1` is incorporated exactly once by the firs
 filter update.
 """
 function init_agent_info(params::SCRIBEModelParameters;
-                         prior_covariance::Union{Nothing, AbstractMatrix{<:Real}}=nothing)
+                         prior_covariance::Union{Nothing, AbstractMatrix{<:Real}}=nothing,
+                         model_time::Integer=1)
     nᵩ = params.nᵩ
     P₀ = isnothing(prior_covariance) ?
          1e3 * Matrix{Float64}(I, nᵩ, nᵩ) :
@@ -99,8 +125,9 @@ The timing of this is slightly unintuitive.
     * The information values represent the updated information about the state after observation at time (k).
     * Accordingly, the system estimate at time (k+1) will be recovered from the information at time (k).
 * Agent Update Process:
-    * Agents are initialized at a location at t=1
-        * Initial values are estimate at t=1, observation at t=1 and initial location, initial information at t=1
+* Agents are initialized with an observation at t=1
+        * The observation may come from a SCRIBE ground-truth model, a `DataObserver`, or a `SensorObservation`.
+        * Initial values are estimate at t=1, observation at t=1, and initial information at t=1.
     * Each update step at t=k requires:
         * Compute innovation gained from observation, generating δi & δI for t=k
             * Recall that the information state at t=k also contains the innovation for t=k-1
@@ -132,14 +159,78 @@ function initialize_scribe(params::SCRIBEModelParameters, bhv::SCRIBEObserverBeh
     end
 end
 
-"""Adds new internal system estimate for t=k+1.
-"""
+"""Initialize a filter whose observations are pulled from external data."""
+function initialize_scribe(
+    params::SCRIBEModelParameters,
+    observer::DataObserver,
+    X₀::Matrix{Float64};
+    prior_covariance::Union{Nothing, AbstractMatrix{<:Real}}=nothing,
+    model_time::Integer=1,
+)
+    estimate = init_agent_estimate(params, observer, X₀, model_time)
+    information = [init_agent_info(params; prior_covariance, model_time)]
+    KFEnvScribe(1, 0, params, observer, [estimate], information)
+end
+
+"""Initialize a filter from an explicitly supplied sensor measurement."""
+function initialize_scribe(
+    params::SCRIBEModelParameters,
+    behavior::SCRIBEObserverBehavior,
+    measurement::SensorObservation;
+    prior_covariance::Union{Nothing, AbstractMatrix{<:Real}}=nothing,
+)
+    estimate = init_agent_estimate(params, behavior, measurement)
+    information = [init_agent_info(
+        params;
+        prior_covariance,
+        model_time=measurement.k,
+    )]
+    KFEnvScribe(1, 0, params, behavior, [estimate], information)
+end
+
+"""Add a new estimate and synthesize its observation from a SCRIBE world."""
 function next_agent_state(agent::KFEnvScribe, ϕₖ::Vector{Float64}, cwrld::SCRIBEModel, X::Matrix{Float64})
     let k=agent.k,
         new_estimate=update_SCRIBEModel(agent.estimates[k].estimate, ϕₖ),
         new_obs=scribe_observations(X, cwrld, agent.bhv)
         push!(agent.estimates, KFEnvEstimate(k+1, new_estimate, new_obs))
     end
+end
+
+"""Add a new estimate and pull its observation from a `DataObserver`."""
+function next_agent_state(
+    agent::KFEnvScribe,
+    ϕₖ::Vector{Float64},
+    X::Matrix{Float64},
+)
+    agent.bhv isa DataObserver ||
+        throw(ArgumentError(
+            "Location-only progression requires a DataObserver; supply a " *
+            "world or SensorObservation for this filter.",
+        ))
+    model = update_SCRIBEModel(agent.estimates[agent.k].estimate, ϕₖ)
+    observation = scribe_observations(X, model, agent.bhv)
+    push!(agent.estimates, KFEnvEstimate(agent.k + 1, model, observation))
+end
+
+"""Add a new estimate using a sensor measurement supplied by the caller."""
+function next_agent_state(
+    agent::KFEnvScribe,
+    ϕₖ::Vector{Float64},
+    measurement::SensorObservation,
+)
+    expected_time = get_model_time(agent.estimates[agent.k].estimate) + 1
+    measurement.k == expected_time ||
+        throw(ArgumentError(
+            "Expected a time-$expected_time observation; received time " *
+            "$(measurement.k).",
+        ))
+    model = update_SCRIBEModel(agent.estimates[agent.k].estimate, ϕₖ)
+    behavior = agent.bhv isa DataObserver ?
+        agent.bhv.behavior :
+        agent.bhv
+    observation = scribe_observations(measurement, model, behavior)
+    push!(agent.estimates, KFEnvEstimate(expected_time, model, observation))
 end
 
 """Insert newest information state gained from info fusion into the agent representation.
@@ -153,6 +244,7 @@ next_agent_time(agent::KFEnvScribe) = agent.k+=1
 struct KFEstimators <: EnvEstimators
     system::KFEnvScribe
     A::Function
+    b::Function
     ϕ::Function
     Q::Function
     H::Function
@@ -161,9 +253,11 @@ struct KFEstimators <: EnvEstimators
     Y::Function
     y::Function
 
-    KFEstimators(system::KFEnvScribe, A::Function, ϕ::Function, Q::Function,
+    KFEstimators(system::KFEnvScribe, A::Function, b::Function,
+                     ϕ::Function, Q::Function,
                      H::Function, z::Function, R::Function,
-                     Y::Function, y::Function) = new(system, A, ϕ, Q, H, z, R, Y, y)
+                     Y::Function, y::Function) =
+        new(system, A, b, ϕ, Q, H, z, R, Y, y)
 end
 
 """Instantiates estimator functions for the LGSF model.
@@ -176,6 +270,7 @@ its corresponding specialization in `eofclimatemodels.jl`.
 """
 function initialize_estimators(system::KFEnvScribe, params::LGSFModelParameters)
     get_A(k, system) = system.estimates[k].estimate.params.A
+    get_b(_, _) = zeros(params.nᵩ)
     get_ϕ(k, system) = system.estimates[k].estimate.ϕ
     get_Q(k, system) = params.w[:Q]
     get_H(k, system) = compute_obs_dynamics(system.estimates[k].estimate, system.estimates[k].observations.X)[1]
@@ -184,7 +279,8 @@ function initialize_estimators(system::KFEnvScribe, params::LGSFModelParameters)
     get_Y(k, system) = system.information[k].Y
     get_y(k, system) = system.information[k].y
 
-    KFEstimators(system, kA->get_A(kA, system), kϕ->get_ϕ(kϕ, system), kQ->get_Q(kQ, system),
+    KFEstimators(system, kA->get_A(kA, system), kb->get_b(kb, system),
+                 kϕ->get_ϕ(kϕ, system), kQ->get_Q(kQ, system),
                  kH->get_H(kH, system), kz->get_z(kz, system), kR->get_R(kR, system),
                  kY->get_Y(kY, system), ky->get_y(ky, system))
 end
@@ -196,8 +292,9 @@ Takes two inputs:
 * The **current** timestep `k`. It will use this along `Ef` to lookup corresponding system information.
 """
 function compute_info_priors(Ef::KFEstimators, k::Integer)
-    @unpack A, Q, Y, y = Ef
-    let A=A(k), Y=Matrix(Symmetric((Y(k) + Y(k)') / 2)), Q=Q(k), y=y(k)
+    @unpack A, b, Q, Y, y = Ef
+    let A=A(k), b=b(k), Y=Matrix(Symmetric((Y(k) + Y(k)') / 2)),
+        Q=Q(k), y=y(k)
         Y_factor = cholesky(Symmetric(Y); check=true)
         P = Matrix(Y_factor \ Matrix{Float64}(I, size(Y)...))
         ϕ = Y_factor \ y
@@ -205,7 +302,7 @@ function compute_info_priors(Ef::KFEstimators, k::Integer)
         P⁻ = Matrix(Symmetric((P_predicted + P_predicted') / 2))
         P⁻_factor = cholesky(Symmetric(P⁻); check=true)
         Y⁻ = Matrix(P⁻_factor \ Matrix{Float64}(I, size(P⁻)...))
-        y⁻ = Y⁻ * A * ϕ
+        y⁻ = Y⁻ * (A * ϕ + b)
         return Y⁻, y⁻
     end
 end
@@ -225,29 +322,17 @@ function compute_innov_from_obs(Ef::KFEstimators, k::Integer)
     return δI, δi
 end
 
-"""Computes the information filter update for y(t=k+1) and Y(t=k+1) from z(k) and y/Y(t=k).
 """
-function centralized_fusion(agent_estimators::Vector{KFEstimators}, k::Integer)
-    # Compute priors from current system state at t=k and previous information state at t=k-1
-    priors = map(ef->compute_info_priors(ef, k), agent_estimators)
-    nₐ=size(priors,1)
-
-    # Ensure all priors are the same
-    if nₐ>1
-        for prior_pair in combinations(priors, 2)
-            let prior_a=prior_pair[1], prior_b=prior_pair[2]
-                @assert isapprox(prior_a[1], prior_b[1]) "Information matrix priors for Y⁻(k+1) are diverged!"
-                @assert isapprox(prior_a[2], prior_b[2]) "Information value priors for y⁻(k+1) are diverged!"
-            end
-        end
-    end
-
-    # Compute innovations for t=k+1 from current observation at t=k
-    innovs = map(ef->compute_innov_from_obs(ef, k), agent_estimators)
-    δĪ=mean(map(x->x[1], innovs))
-    δī=mean(map(x->x[2], innovs))
-
-    return [KFEnvInfo(priors[a][2]+nₐ*δī, priors[a][1]+nₐ*δĪ, δī, δĪ) for a in 1:nₐ]
+Advance one estimator's information filter from time `k` to `k+1` using its
+local observation. Multi-agent information must instead be reconciled through
+SCRIBE's distributed fusion protocol.
+"""
+function information_filter_update(estimators::EnvEstimators, k::Integer)
+    Y⁻, y⁻ = compute_info_priors(estimators, k)
+    δI, δi = compute_innov_from_obs(estimators, k)
+    Y_next = Y⁻ + δI
+    Y = Matrix(Symmetric((Y_next + Y_next') / 2))
+    KFEnvInfo(y⁻ + δi, Y, δi, δI)
 end
 
 """Recover the state estimate vector from given info state.
@@ -259,15 +344,46 @@ end
 
 recover_estimate_from_info(agent::KFEnvScribe, k::Integer) = recover_estimate_from_info(agent.information[k])
 
-"""Consolidated update process given new fused information estimates y/Y(t=k+1)
-
-Also requires the new state of the world and the new sampling locations.
-"""
+"""Advance a simulated filter with fused information and a SCRIBE world."""
 function progress_agent_env_filter(agent::KFEnvScribe, info::KFEnvInfo, world::SCRIBEModel, X::Matrix{Float64})
     ϕₖ=recover_estimate_from_info(info) # acquire ϕⱼ(t=k+1)
     next_agent_info_state(agent, info) # set info(t=k+1)
     next_agent_state(agent, ϕₖ, world, X) # set ϕⱼ(t=k+1); acquire and set z(t=k+1)
     next_agent_time(agent) # k ⟵ k+1
+end
+
+"""Advance a data-backed filter and pull its next observation at `X`."""
+function progress_agent_env_filter(
+    agent::KFEnvScribe,
+    info::KFEnvInfo,
+    X::Matrix{Float64},
+)
+    agent.bhv isa DataObserver ||
+        throw(ArgumentError(
+            "Location-only progression requires a DataObserver.",
+        ))
+    ϕₖ = recover_estimate_from_info(info)
+    next_agent_info_state(agent, info)
+    next_agent_state(agent, ϕₖ, X)
+    next_agent_time(agent)
+end
+
+"""Advance a filter using a pre-collected next sensor measurement."""
+function progress_agent_env_filter(
+    agent::KFEnvScribe,
+    info::KFEnvInfo,
+    measurement::SensorObservation,
+)
+    expected_time = get_model_time(agent.estimates[agent.k].estimate) + 1
+    measurement.k == expected_time ||
+        throw(ArgumentError(
+            "Expected a time-$expected_time observation; received time " *
+            "$(measurement.k).",
+        ))
+    ϕₖ = recover_estimate_from_info(info)
+    next_agent_info_state(agent, info)
+    next_agent_state(agent, ϕₖ, measurement)
+    next_agent_time(agent)
 end
 
 """Initialize the Kalman Filter system.
@@ -279,4 +395,38 @@ function initialize_KF(params::SCRIBEModelParameters, observer::SCRIBEObserverBe
                                    prior_covariance)
         return initialize_estimators(scribe, params)
     end
+end
+
+"""Initialize a Kalman information filter backed by external data."""
+function initialize_KF(
+    params::SCRIBEModelParameters,
+    observer::DataObserver,
+    init_loc::Matrix{Float64};
+    prior_covariance::Union{Nothing, AbstractMatrix{<:Real}}=nothing,
+    model_time::Integer=1,
+)
+    scribe = initialize_scribe(
+        params,
+        observer,
+        init_loc;
+        prior_covariance,
+        model_time,
+    )
+    initialize_estimators(scribe, params)
+end
+
+"""Initialize a Kalman information filter from a sensor measurement."""
+function initialize_KF(
+    params::SCRIBEModelParameters,
+    behavior::SCRIBEObserverBehavior,
+    measurement::SensorObservation;
+    prior_covariance::Union{Nothing, AbstractMatrix{<:Real}}=nothing,
+)
+    scribe = initialize_scribe(
+        params,
+        behavior,
+        measurement;
+        prior_covariance,
+    )
+    initialize_estimators(scribe, params)
 end

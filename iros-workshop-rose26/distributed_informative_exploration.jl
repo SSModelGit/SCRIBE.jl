@@ -634,7 +634,7 @@ function update_backend_information!(
                 )
                 SCRIBEModelState(
                     state.models[aid].smodel,
-                    local_information_update(estimator, 1),
+                    information_filter_update(estimator, 1),
                     state.models[aid].R,
                 )
             end
