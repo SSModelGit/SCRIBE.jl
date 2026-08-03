@@ -33,16 +33,20 @@ prior with a declared `Q`; no transition matrix, forcing vector, or temporal
 schedule is learned from the archive. The example's `process_variance` is the
 coefficient variance admitted per selected update interval and should be
 redeclared when the operational cadence or expected rate of change differs.
-It also writes three 4×4 diagnostic figures. Each consecutive pair shows one
-of eight training snapshots beside its best-fit reconstruction, posterior
-field-covariance diagonal, or pointwise percent relative error. The posterior
+It also writes three 4×4 diagnostic figures. The first two rows contain four
+training snapshots and the last two rows contain four snapshots from the
+untouched chronological validation block. Each consecutive pair shows ground
+truth beside its best-fit reconstruction, posterior field-covariance diagonal,
+or pointwise percent relative error; every reconstruction is annotated with
+its full-field RMSE. The posterior
 variance uses a full-field observation variance of `1e-4`; because observation
 geometry and covariance are fixed, the linear-Gaussian posterior covariance is
 the same for all eight snapshots even though their reconstructed means differ.
 
 The second example runs four coefficient-learning demonstrations. Each fixes
-the environment at one ROMS snapshot, initializes the SCRIBE coefficient mean
-at the best-fit coordinate of a different snapshot, and gathers 400 sparse
+the environment at a snapshot from the untouched validation block, initializes
+the SCRIBE coefficient mean at the best-fit coordinate of a training snapshot,
+and gathers 400 sparse
 measurements along a serpentine agent trajectory. The ground truth is supplied
 directly through a `DataObserver`; no separate ground-truth `SCRIBEModel` is
 constructed. Each scenario writes a side-by-side truth/posterior animation and
@@ -54,10 +58,12 @@ sample zero, so its first posterior panel is the unconditioned prior.
 Subsequent frames show the ordinary SCRIBE information-filter updates pulling
 the coefficient vector toward the fixed truth coordinate.
 
-The online demonstration isolates state identification within the learned EOF
-space. It is not a temporal forecast: the selected truth snapshot remains fixed
-while the agent explores it. Chronological held-out projection remains a
-separate offline basis-validation calculation.
+The online demonstration therefore combines held-out representation with
+sparse-observation state identification. It is not a temporal forecast: the
+selected validation snapshot remains fixed while the agent explores it. Its
+reference coefficient is the direct projection of that unseen field into the
+fixed EOF basis, while full-field RMSE also retains irreducible truncation
+error.
 Extending it to multiple agents only requires creating one estimator per agent
 and connecting those agents through SCRIBE's distributed fusion protocol; the
 EOF model and observer code do not change.

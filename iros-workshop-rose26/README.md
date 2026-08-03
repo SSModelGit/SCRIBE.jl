@@ -121,18 +121,3 @@ JULIA_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 GKSwstype=png \
 Do not run the four full profiles concurrently. The filtering studies execute
 their Monte Carlo trials sequentially and render only after the corresponding
 trials have completed.
-
-## Manuscript
-
-`scribe_extended_abstract.tex` is the submission source and
-`scribe_extended_abstract.pdf` is the compiled three-page anonymous artifact.
-The source
-uses the `ieeeconf` class and `IEEEtran` bibliography style from the
-[PaperCept LaTeX support package](https://ras.papercept.net/conferences/support/tex.php).
-Place `ieeeconf.cls` and `IEEEtran.bst` beside the source before compiling.
-The manuscript omits author identities, affiliations, acknowledgments, and
-identifying links for double-anonymous review. The manuscript uses separate
-field-reconstruction and distributed-performance figures so that each visual
-appears beside the claim it supports. These figures and the compact numerical
-summaries are retained under `res/`; full metric histories and animations
-remain ignored generated artifacts.

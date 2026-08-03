@@ -28,31 +28,33 @@ end
 function paired_snapshot_grid(
     truths,
     results,
-    snapshot_ids,
+    snapshot_labels,
     roms;
     result_name,
     result_color,
     result_limits,
     figure_title,
+    result_details=fill("", length(truths)),
 )
     truth_limit = maximum(maximum(abs, field) for field in truths)
     panels = []
-    for (truth, result, snapshot) in zip(
+    for (truth, result, label, detail) in zip(
         truths,
         results,
-        snapshot_ids,
+        snapshot_labels,
+        result_details,
     )
         push!(panels, field_panel(
             truth,
             roms,
-            "Snapshot $snapshot: ground truth";
+            "$label: ground truth";
             color=:balance,
             clims=(-truth_limit, truth_limit),
         ))
         push!(panels, field_panel(
             result,
             roms,
-            "Snapshot $snapshot: $result_name";
+            "$label: $result_name$detail";
             color=result_color,
             clims=result_limits,
         ))
@@ -74,17 +76,38 @@ function posterior_field_variance(params; observation_variance=1e-4)
     vec(sum((E * P) .* E; dims=2)) + residual
 end
 
-function save_training_plots(model, training_data, roms, component, output_dir)
+function save_offline_plots(model, roms, component, output_dir)
     decomposition = model.params.decomposition
-    reconstruction = decomposition.mean .+
-        decomposition.modes * decomposition.coefficients
-    snapshot_ids = round.(Int, range(
+    n_training = decomposition.n_samples
+    training_ids = round.(Int, range(
         1,
-        size(training_data, 2);
-        length=8,
+        n_training;
+        length=4,
     ))
-    truths = [training_data[:, snapshot] for snapshot in snapshot_ids]
-    reconstructions = [reconstruction[:, snapshot] for snapshot in snapshot_ids]
+    validation_ids = round.(Int, range(
+        n_training + 1,
+        size(roms.data, 2);
+        length=4,
+    ))
+    snapshot_ids = vcat(training_ids, validation_ids)
+    snapshot_labels = vcat(
+        ["Training $snapshot" for snapshot in training_ids],
+        ["Validation $snapshot" for snapshot in validation_ids],
+    )
+    truth_matrix = roms.data[:, snapshot_ids]
+    coefficients = decomposition.modes' *
+        (decomposition.weights .* (truth_matrix .- decomposition.mean))
+    reconstruction = decomposition.mean .+
+        decomposition.modes * coefficients
+    truths = [truth_matrix[:, snapshot] for snapshot in axes(truth_matrix, 2)]
+    reconstructions = [
+        reconstruction[:, snapshot]
+        for snapshot in axes(reconstruction, 2)
+    ]
+    reconstruction_rmse = [
+        sqrt(mean(abs2, estimate - truth))
+        for (truth, estimate) in zip(truths, reconstructions)
+    ]
     posterior_variance = posterior_field_variance(model.params)
     variances = [copy(posterior_variance) for _ in snapshot_ids]
     relative_errors = [
@@ -98,20 +121,24 @@ function save_training_plots(model, training_data, roms, component, output_dir)
     reconstruction_plot = paired_snapshot_grid(
         truths,
         reconstructions,
-        snapshot_ids,
+        snapshot_labels,
         roms;
         result_name="EOF reconstruction",
         result_color=:balance,
         result_limits=(-truth_limit, truth_limit),
+        result_details=[
+            "\nRMSE=$(round(rmse; digits=5))"
+            for rmse in reconstruction_rmse
+        ],
         figure_title="Ground truth and best-fit EOF reconstruction " *
             "(shared scale ±$(round(truth_limit; digits=2)))",
     )
-    savefig(reconstruction_plot, "$(prefix)_training_reconstruction.png")
+    savefig(reconstruction_plot, "$(prefix)_reconstruction.png")
 
     covariance_plot = paired_snapshot_grid(
         truths,
         variances,
-        snapshot_ids,
+        snapshot_labels,
         roms;
         result_name="posterior covariance diagonal",
         result_color=:magma,
@@ -124,7 +151,7 @@ function save_training_plots(model, training_data, roms, component, output_dir)
     error_plot = paired_snapshot_grid(
         truths,
         relative_errors,
-        snapshot_ids,
+        snapshot_labels,
         roms;
         result_name="percent relative error",
         result_color=:magma,
@@ -183,9 +210,8 @@ function construct_roms_eof_model(;
 
     mkpath(dirname(artifact))
     save_eof_model(artifact, model)
-    save_training_plots(
+    save_offline_plots(
         model,
-        training_data,
         roms,
         component,
         dirname(artifact),

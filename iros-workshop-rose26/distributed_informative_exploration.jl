@@ -1250,13 +1250,13 @@ function save_distributed_performance_figure(rows, settings, output_dir)
     figure = plot(
         panels...,
         legend_panel;
-        layout=@layout([grid(1, 3); legend{0.17h}]),
-        size=(1560, 680),
+        layout=@layout([grid(1, 3); legend{0.18h}]),
+        size=(1560, 540),
         margin=2 * Plots.mm,
-        titlefontsize=18,
-        guidefontsize=15,
-        tickfontsize=13,
-        legendfontsize=12,
+        titlefontsize=17,
+        guidefontsize=14,
+        tickfontsize=12,
+        legendfontsize=11,
     )
     output_path = joinpath(output_dir, "distributed_performance.png")
     savefig(figure, output_path)

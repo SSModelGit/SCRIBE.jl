@@ -5,10 +5,10 @@ using Statistics: mean
 include("_roms_data.jl")
 
 const ONLINE_EOF_SCENARIOS = (
-    (prior_snapshot=1, truth_snapshot=650),
-    (prior_snapshot=1299, truth_snapshot=1948),
-    (prior_snapshot=2597, truth_snapshot=3246),
-    (prior_snapshot=3895, truth_snapshot=4544),
+    (prior_snapshot=1, truth_snapshot=4545),
+    (prior_snapshot=1515, truth_snapshot=4923),
+    (prior_snapshot=3030, truth_snapshot=5302),
+    (prior_snapshot=4544, truth_snapshot=5680),
 )
 
 function field_grid(values, roms)
@@ -58,8 +58,10 @@ function simulate_online_learning(
     sensor_variance=1e-4,
 )
     truth = roms.data[:, scenario.truth_snapshot]
-    truth_coefficients =
-        params.decomposition.coefficients[:, scenario.truth_snapshot]
+    decomposition = params.decomposition
+    truth_coefficients = decomposition.modes' * (
+        decomposition.weights .* (truth - decomposition.mean)
+    )
     scenario_params = parameters_at_snapshot(params, scenario.prior_snapshot)
     model = initialize_SCRIBEModel_from_parameters(scenario_params)
     trajectory = exploration_trajectory(roms, n_samples)
