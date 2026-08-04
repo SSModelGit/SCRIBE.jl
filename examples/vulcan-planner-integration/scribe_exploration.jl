@@ -312,12 +312,13 @@ function main(profile=:full)
     let settings=experiment_settings(profile),
         problem=exploration_problem(settings),
         result=run_exploration(problem.mdp, problem.start, settings),
-        output_dir=joinpath(
+        output_dir=normpath(joinpath(
             @__DIR__,
+            "..",
             "res",
-            "vulcan_scribe",
+            "vulcan-planner-integration",
             String(profile),
-        )
+        ))
         save_experiment(result, output_dir, settings)
         print_experiment_summary(result, output_dir)
         result
