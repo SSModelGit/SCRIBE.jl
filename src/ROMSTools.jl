@@ -99,13 +99,18 @@ function prepare_roms_component(
     decimate_roms(positioned, spatial_stride)
 end
 
+"""
+Compute vertical vorticity `∂v/∂x - ∂u/∂y` from collocated horizontal
+velocity components on the supplied longitude/latitude grid. `u` and `v` must
+follow the eastward and northward grid directions, respectively.
+"""
 function velocity_curl(u, v, longitude, latitude)
     size(u) == size(v) || throw(DimensionMismatch(
         "ROMS u and v arrays must share a collocated grid",
     ))
     x, y = planar_coordinates(longitude, latitude)
     n_i, n_j, n_t = size(u)
-    curl = fill(Float32(NaN), n_i, n_j, n_t)
+    curl = fill(NaN, n_i, n_j, n_t)
     for t in 1:n_t, j in 1:n_j, i in 1:n_i
         i₀, i₁ = max(i - 1, 1), min(i + 1, n_i)
         j₀, j₁ = max(j - 1, 1), min(j + 1, n_j)
@@ -140,8 +145,8 @@ function prepare_roms_curl(path; temporal_stride, spatial_stride=1)
     v = read_roms_velocity(path, :v)
     sampled_times = collect(1:temporal_stride:size(u[:values], 3))
     curl = velocity_curl(
-        Float32.(u[:values][:, :, sampled_times]),
-        Float32.(v[:values][:, :, sampled_times]),
+        view(u[:values], :, :, sampled_times),
+        view(v[:values], :, :, sampled_times),
         u[:longitude],
         u[:latitude],
     )
@@ -278,15 +283,16 @@ function plot_roms_curl(
     limit=field_limit(values),
     colorbar=true,
 )
-    vorticity = field_grid(values, roms)
+    display_scale = 1e3
+    vorticity = display_scale .* field_grid(values, roms)
     flow_u = field_grid(view(flow_directions, :, 1), roms)
     flow_v = field_grid(view(flow_directions, :, 2), roms)
     panel = heatmap(
         vorticity;
         color=:balance,
-        clims=(-limit, limit),
+        clims=(-display_scale * limit, display_scale * limit),
         colorbar,
-        colorbar_title="curl",
+        colorbar_title="curl (10⁻³ s⁻¹)",
         background_color_inside=:gray25,
         aspect_ratio=:equal,
         axis=false,
@@ -298,40 +304,45 @@ function plot_roms_curl(
     columns = 2:arrow_stride:size(vorticity, 2)-1
     x = Float64[]
     y = Float64[]
-    u = Float64[]
-    v = Float64[]
     for row in rows, column in columns
         direction_u = flow_u[row, column]
         direction_v = flow_v[row, column]
         all(isfinite, (direction_u, direction_v)) || continue
         direction_norm = hypot(direction_u, direction_v)
         direction_norm > eps(Float64) || continue
-        arrow_length = 1.4
-        arrow_u = arrow_length * direction_u / direction_norm
-        arrow_v = arrow_length * direction_v / direction_norm
-        push!(x, column - arrow_u / 2)
-        push!(y, row - arrow_v / 2)
-        push!(u, arrow_u)
-        push!(v, arrow_v)
+        direction_x = direction_u / direction_norm
+        direction_y = direction_v / direction_norm
+        normal_x = -direction_y
+        normal_y = direction_x
+        arrow_length = 3.0
+        head_length = 0.8
+        head_width = 0.45
+        start_x = column - arrow_length * direction_x / 2
+        start_y = row - arrow_length * direction_y / 2
+        tip_x = column + arrow_length * direction_x / 2
+        tip_y = row + arrow_length * direction_y / 2
+        left_x = tip_x - head_length * direction_x + head_width * normal_x
+        left_y = tip_y - head_length * direction_y + head_width * normal_y
+        right_x = tip_x - head_length * direction_x - head_width * normal_x
+        right_y = tip_y - head_length * direction_y - head_width * normal_y
+        append!(x, (start_x, tip_x, NaN, left_x, tip_x, right_x, NaN))
+        append!(y, (start_y, tip_y, NaN, left_y, tip_y, right_y, NaN))
     end
-    quiver!(
+    plot!(
         panel,
         x,
         y;
-        quiver=(u, v),
-        arrow=arrow(:closed, :head, (0.14, 0.10)),
         color=:white,
-        linewidth=2.0,
+        linewidth=2.8,
+        alpha=0.9,
         label=false,
     )
-    quiver!(
+    plot!(
         panel,
         x,
         y;
-        quiver=(u, v),
-        arrow=arrow(:closed, :head, (0.10, 0.06)),
-        color=:gray15,
-        linewidth=0.8,
+        color=:gray10,
+        linewidth=1.1,
         label=false,
     )
     panel
