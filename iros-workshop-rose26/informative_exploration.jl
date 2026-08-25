@@ -6,27 +6,27 @@ using Plots
 using Statistics
 
 publication_exploration_settings(profile) = @match profile begin
-    :full => (
-        seed=18,
-        navigation_points=33,
-        evaluation_points=51,
-        n_samples=108,
-        lookahead=8,
-        time_budget=0.10,
-        noise_variance=0.08,
-        process_variance=1e-10,
-        animation_fps=4,
+    :full => Dict(
+        :seed => 18,
+        :navigation_points => 33,
+        :evaluation_points => 51,
+        :n_samples => 108,
+        :lookahead => 8,
+        :time_budget => 0.10,
+        :noise_variance => 0.08,
+        :process_variance => 1e-10,
+        :animation_fps => 4,
     )
-    :smoke => (
-        seed=18,
-        navigation_points=17,
-        evaluation_points=21,
-        n_samples=16,
-        lookahead=3,
-        time_budget=0.02,
-        noise_variance=0.08,
-        process_variance=1e-10,
-        animation_fps=2,
+    :smoke => Dict(
+        :seed => 18,
+        :navigation_points => 17,
+        :evaluation_points => 21,
+        :n_samples => 16,
+        :lookahead => 3,
+        :time_budget => 0.02,
+        :noise_variance => 0.08,
+        :process_variance => 1e-10,
+        :animation_fps => 2,
     )
     _ => throw(ArgumentError("Use the `full` or `smoke` publication profile."))
 end
@@ -47,10 +47,7 @@ function publication_truth_panel(visualization)
             values;
             reduce(
                 vcat,
-                getproperty.(
-                    getproperty.(visualization.frames, :summary),
-                    :prediction,
-                ),
+                getindex.(getindex.(visualization.frames, :summary), :prediction),
             )
         ])
         heatmap(
@@ -74,11 +71,11 @@ function publication_truth_panel(visualization)
 end
 
 function publication_error_panel(visualization)
-    let samples=getproperty.(visualization.frames, :n_samples),
-        summaries=getproperty.(visualization.frames, :summary),
+    let samples=getindex.(visualization.frames, :n_samples),
+        summaries=getindex.(visualization.frames, :summary),
         plot_object=plot(
             samples,
-            getproperty.(summaries, :rmse);
+            getindex.(summaries, :rmse);
             label="RMSE",
             linewidth=2,
             xlabel="samples",
@@ -88,7 +85,7 @@ function publication_error_panel(visualization)
         plot!(
             plot_object,
             samples,
-            getproperty.(summaries, :mae);
+            getindex.(summaries, :mae);
             label="MAE",
             linewidth=2,
         )
@@ -97,11 +94,11 @@ function publication_error_panel(visualization)
 end
 
 function publication_information_panels(visualization)
-    let samples=getproperty.(visualization.frames, :n_samples),
-        summaries=getproperty.(visualization.frames, :summary),
+    let samples=getindex.(visualization.frames, :n_samples),
+        summaries=getindex.(visualization.frames, :summary),
         uncertainty_plot=plot(
             samples,
-            getproperty.(summaries, :mean_uncertainty);
+            getindex.(summaries, :mean_uncertainty);
             label="mean posterior σ",
             linewidth=2,
             xlabel="samples",
@@ -110,7 +107,7 @@ function publication_information_panels(visualization)
         ),
         information_plot=plot(
             samples,
-            getproperty.(visualization.frames, :expected_information);
+            getindex.(visualization.frames, :expected_information);
             label="expected MI",
             linewidth=2,
             xlabel="samples",
@@ -120,7 +117,7 @@ function publication_information_panels(visualization)
         plot!(
             information_plot,
             samples,
-            getproperty.(visualization.frames, :realized_information);
+            getindex.(visualization.frames, :realized_information);
             label="realized KL",
             linewidth=2,
         )
@@ -175,25 +172,25 @@ function save_publication_exploration_metrics(
             "expected_mutual_information,realized_kl",
         )
         foreach(visualization.frames) do evaluated
-            summary=evaluated.summary
-            sample=evaluated.n_samples
+            summary=evaluated[:summary]
+            sample=evaluated[:n_samples]
             location=sample == 0 ?
-                first(result.sampling_locations) :
-                result.sampling_locations[sample]
-            observation=sample == 0 ? "" : result.observations[sample]
+                first(result[:sampling_locations]) :
+                result[:sampling_locations][sample]
+            observation=sample == 0 ? "" : result[:observations][sample]
             println(
                 io,
                 "$(sample),$(location[1]),$(location[2])," *
-                "$(observation),$(summary.rmse)," *
-                "$(summary.normalized_rmse),$(summary.mae)," *
-                "$(summary.predictive_log_likelihood)," *
-                "$(summary.interval_coverage)," *
-                "$(summary.integrated_uncertainty)," *
-                "$(summary.mean_uncertainty)," *
-                "$(summary.maximum_uncertainty)," *
-                "$(evaluated.integrated_variance_reduction)," *
-                "$(evaluated.expected_information)," *
-                "$(evaluated.realized_information)",
+                "$(observation),$(summary[:rmse])," *
+                "$(summary[:normalized_rmse]),$(summary[:mae])," *
+                "$(summary[:predictive_log_likelihood])," *
+                "$(summary[:interval_coverage])," *
+                "$(summary[:integrated_uncertainty])," *
+                "$(summary[:mean_uncertainty])," *
+                "$(summary[:maximum_uncertainty])," *
+                "$(evaluated[:integrated_variance_reduction])," *
+                "$(evaluated[:expected_information])," *
+                "$(evaluated[:realized_information])",
             )
         end
     end
@@ -205,7 +202,7 @@ function save_publication_exploration(
     settings;
     animations=false,
 )
-    let visualization=result.visualization
+    let visualization=result[:visualization]
         save_static_visualizations(
             visualization;
             output_dir,
@@ -229,7 +226,7 @@ function save_publication_exploration(
                     :posterior_against_ground_truth,
                     :posterior_summary,
                 ],
-                fps=settings.animation_fps,
+                fps=settings[:animation_fps],
             )
         end
         save_publication_exploration_metrics(
@@ -243,18 +240,18 @@ function save_publication_exploration(
 end
 
 function print_experiment_summary(visualization, output_dir)
-    let initial=first(visualization.frames).summary,
-        final=last(visualization.frames).summary
+    let initial=first(visualization.frames)[:summary],
+        final=last(visualization.frames)[:summary]
         println("SCRIBE-backed VulcanJ exploration complete.")
-        println("  samples: $(last(visualization.frames).n_samples)")
+        println("  samples: $(last(visualization.frames)[:n_samples])")
         println(
-            "  RMSE: $(round(initial.rmse; digits=4)) → " *
-            "$(round(final.rmse; digits=4))",
+            "  RMSE: $(round(initial[:rmse]; digits=4)) → " *
+            "$(round(final[:rmse]; digits=4))",
         )
         println(
             "  mean posterior σ: " *
-            "$(round(initial.mean_uncertainty; digits=4)) → " *
-            "$(round(final.mean_uncertainty; digits=4))",
+            "$(round(initial[:mean_uncertainty]; digits=4)) → " *
+            "$(round(final[:mean_uncertainty]; digits=4))",
         )
         println("  results: $output_dir")
     end
@@ -267,8 +264,8 @@ function planning_publication_main(
     let settings=publication_exploration_settings(profile),
         problem=exploration_problem(settings),
         result=run_exploration(
-            problem.mdp,
-            problem.start,
+            problem[:mdp],
+            problem[:start],
             settings,
         ),
         output_dir=joinpath(
@@ -284,7 +281,7 @@ function planning_publication_main(
             animations,
         )
         print_experiment_summary(visualization, output_dir)
-        (result=result, visualization=visualization)
+        Dict(:result => result, :visualization => visualization)
     end
 end
 

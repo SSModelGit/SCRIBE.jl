@@ -30,23 +30,23 @@ struct InformativeExplorationMDP <: MDP{Matrix, Symbol}
 end
 
 experiment_settings(profile) = @match profile begin
-    :full => (
-        seed=18,
-        navigation_points=33,
-        evaluation_points=51,
-        n_samples=108,
-        lookahead=8,
-        time_budget=0.10,
-        animation_fps=4,
+    :full => Dict(
+        :seed => 18,
+        :navigation_points => 33,
+        :evaluation_points => 51,
+        :n_samples => 108,
+        :lookahead => 8,
+        :time_budget => 0.10,
+        :animation_fps => 4,
     )
-    :smoke => (
-        seed=18,
-        navigation_points=17,
-        evaluation_points=21,
-        n_samples=16,
-        lookahead=3,
-        time_budget=0.02,
-        animation_fps=2,
+    :smoke => Dict(
+        :seed => 18,
+        :navigation_points => 17,
+        :evaluation_points => 21,
+        :n_samples => 16,
+        :lookahead => 3,
+        :time_budget => 0.02,
+        :animation_fps => 2,
     )
     _ => throw(ArgumentError("Use the `full` or `smoke` experiment profile."))
 end
@@ -109,7 +109,7 @@ function VulcanJ.conditional_observation_distribution(
             location,
             model.R,
         )
-        Normal(only(moments.μ), sqrt(only(moments.Σ)))
+        Normal(only(moments[:μ]), sqrt(only(moments[:Σ])))
     end
 end
 
@@ -165,7 +165,7 @@ function exploration_problem(settings)
             0.08,
         ),
         evaluation_axis=collect(
-            range(-5.0, 5.0; length=settings.evaluation_points),
+            range(-5.0, 5.0; length=settings[:evaluation_points]),
         ),
         evaluation_grid=SCRIBEVisualizationGrid(
             evaluation_axis,
@@ -194,28 +194,28 @@ function exploration_problem(settings)
         end,
         mdp=InformativeExplorationMDP(
             (-5.0, 5.0),
-            10.0 / (settings.navigation_points - 1),
+            10.0 / (settings[:navigation_points] - 1),
             planning_dynamics,
             ground_truth,
             initial_model,
             evaluation_grid,
-            settings.n_samples,
+            settings[:n_samples],
         )
-        (mdp=mdp, start=zeros(1, 2))
+        Dict(:mdp => mdp, :start => zeros(1, 2))
     end
 end
 
 function run_exploration(mdp, start, settings)
-    let rng=MersenneTwister(settings.seed),
+    let rng=MersenneTwister(settings[:seed]),
         policy=solve(
             RiskBoundedInfoMCTS(
-                lookahead=settings.lookahead,
-                time_budget=settings.time_budget,
+                lookahead=settings[:lookahead],
+                time_budget=settings[:time_budget],
                 quad_order=1,
                 risk_budget=1.0,
                 alpha=0.0,
                 reference_reward=1.0,
-                rng=MersenneTwister(settings.seed + 1),
+                rng=MersenneTwister(settings[:seed] + 1),
             ),
             mdp,
         ),
@@ -225,7 +225,7 @@ function run_exploration(mdp, start, settings)
         observations=Float64[],
         state=copy(start)
 
-        foreach(1:settings.n_samples) do sample
+        foreach(1:settings[:n_samples]) do sample
             if sample > 1
                 set_environment_model!(policy, state, model)
                 state=gen(
@@ -254,18 +254,18 @@ function run_exploration(mdp, start, settings)
             grid=mdp.evaluation_grid,
             ground_truth=mdp.ground_truth,
         )
-        (
-            model_states=model_states,
-            sampling_locations=sampling_locations,
-            observations=observations,
-            visualization=visualization,
+        Dict(
+            :model_states => model_states,
+            :sampling_locations => sampling_locations,
+            :observations => observations,
+            :visualization => visualization,
         )
     end
 end
 
 function save_experiment(result, output_dir, settings)
     save_static_visualizations(
-        result.visualization;
+        result[:visualization];
         output_dir,
         metrics=[
             :posterior_mean,
@@ -278,7 +278,7 @@ function save_experiment(result, output_dir, settings)
         ],
     )
     save_animated_visualizations(
-        result.visualization;
+        result[:visualization];
         output_dir,
         metrics=[
             :posterior_mean,
@@ -286,23 +286,23 @@ function save_experiment(result, output_dir, settings)
             :posterior_against_ground_truth,
             :posterior_summary,
         ],
-        fps=settings.animation_fps,
+        fps=settings[:animation_fps],
     )
 end
 
 function print_experiment_summary(result, output_dir)
-    let initial=first(result.visualization.frames).summary,
-        final=last(result.visualization.frames).summary
+    let initial=first(result[:visualization].frames)[:summary],
+        final=last(result[:visualization].frames)[:summary]
         println("SCRIBE-backed VulcanJ exploration complete.")
-        println("  samples: $(length(result.observations))")
+        println("  samples: $(length(result[:observations]))")
         println(
-            "  RMSE: $(round(initial.rmse; digits=4)) → " *
-            "$(round(final.rmse; digits=4))",
+            "  RMSE: $(round(initial[:rmse]; digits=4)) → " *
+            "$(round(final[:rmse]; digits=4))",
         )
         println(
             "  mean posterior σ: " *
-            "$(round(initial.mean_uncertainty; digits=4)) → " *
-            "$(round(final.mean_uncertainty; digits=4))",
+            "$(round(initial[:mean_uncertainty]; digits=4)) → " *
+            "$(round(final[:mean_uncertainty]; digits=4))",
         )
         println("  results: $output_dir")
     end
@@ -311,7 +311,7 @@ end
 function main(profile=:full)
     let settings=experiment_settings(profile),
         problem=exploration_problem(settings),
-        result=run_exploration(problem.mdp, problem.start, settings),
+        result=run_exploration(problem[:mdp], problem[:start], settings),
         output_dir=normpath(joinpath(
             @__DIR__,
             "..",

@@ -3,7 +3,7 @@ module SCRIBE
 using Reexport
 using LinearAlgebra
 using GaussianDistributions: ⊕, Gaussian
-using Parameters: @unpack
+using Parameters: @unpack, @with_kw_noshow
 
 include("SCRIBEModels.jl")
 @reexport using .SCRIBEModels
@@ -67,6 +67,9 @@ end
 
 include("kalman_estimation.jl")
 include("eofclimatemodels.jl")
+include("eof_uncertainty.jl")
+include("ROMSTools.jl")
+export ROMSTools
 include("model_prediction.jl")
 include("model_visualization.jl")
 

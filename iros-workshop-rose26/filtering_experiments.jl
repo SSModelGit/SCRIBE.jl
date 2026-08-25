@@ -64,11 +64,11 @@ function SCRIBE.compute_innov_from_obs(
 )
     let observation=estimators.observations[k],
         innovation=measurement_information(
-            observation.H,
-            observation.z,
-            observation.R,
+            observation[:H],
+            observation[:z],
+            observation[:R],
         )
-        (innovation.δI, innovation.δi)
+        (innovation[:δI], innovation[:δi])
     end
 end
 
@@ -80,31 +80,31 @@ function SCRIBE.next_agent_info_state(
 end
 
 publication_settings(profile) = @match profile begin
-    :full => (
-        seeds=Tuple(101:2:159),
-        n_agents=4,
-        n_steps=24,
-        phase_steps=(8, 8, 8),
-        communication_radius=8.25,
-        basis_points=5,
-        evaluation_points=31,
-        noise_variance=0.04,
-        process_variance=1e-6,
-        consensus_threshold=1e-7,
-        consensus_timeline=180,
+    :full => Dict(
+        :seeds => Tuple(101:2:159),
+        :n_agents => 4,
+        :n_steps => 24,
+        :phase_steps => (8, 8, 8),
+        :communication_radius => 8.25,
+        :basis_points => 5,
+        :evaluation_points => 31,
+        :noise_variance => 0.04,
+        :process_variance => 1e-6,
+        :consensus_threshold => 1e-7,
+        :consensus_timeline => 180,
     )
-    :smoke => (
-        seeds=(101, 103),
-        n_agents=4,
-        n_steps=6,
-        phase_steps=(2, 2, 2),
-        communication_radius=8.25,
-        basis_points=4,
-        evaluation_points=15,
-        noise_variance=0.04,
-        process_variance=1e-6,
-        consensus_threshold=1e-6,
-        consensus_timeline=120,
+    :smoke => Dict(
+        :seeds => (101, 103),
+        :n_agents => 4,
+        :n_steps => 6,
+        :phase_steps => (2, 2, 2),
+        :communication_radius => 8.25,
+        :basis_points => 4,
+        :evaluation_points => 15,
+        :noise_variance => 0.04,
+        :process_variance => 1e-6,
+        :consensus_threshold => 1e-6,
+        :consensus_timeline => 120,
     )
     _ => throw(ArgumentError("Use the `full` or `smoke` publication profile."))
 end
@@ -116,7 +116,7 @@ function publication_locations(n_points)
 end
 
 function publication_parameters(settings)
-    let centers=publication_locations(settings.basis_points),
+    let centers=publication_locations(settings[:basis_points]),
         nᵩ=size(centers, 1)
         LGSFModelParameters(
             μ=centers,
@@ -124,7 +124,7 @@ function publication_parameters(settings)
             τ=[1.0],
             ϕ₀=zeros(nᵩ),
             A=Matrix{Float64}(I, nᵩ, nᵩ),
-            Q=settings.process_variance *
+            Q=settings[:process_variance] *
                 Matrix{Float64}(I, nᵩ, nᵩ),
         )
     end
@@ -208,28 +208,28 @@ function truth_definition(kind, smodel, evaluation_locations)
                 smodel,
                 evaluation_locations,
             )
-            (
-                coefficients=coefficients,
-                evaluate=X -> prediction_dynamics(smodel, X) * coefficients,
+            Dict(
+                :coefficients => coefficients,
+                :evaluate => X -> prediction_dynamics(smodel, X) * coefficients,
             )
         end
-        :misspecified => (
-            coefficients=nothing,
-            evaluate=misspecified_truth,
+        :misspecified => Dict(
+            :coefficients => nothing,
+            :evaluate => misspecified_truth,
         )
     end
 end
 
 function agent_ids(settings)
-    ["agent$(i)" for i in 1:settings.n_agents]
+    ["agent$(i)" for i in 1:settings[:n_agents]]
 end
 
 function sample_location(agent_index, k, settings)
-    let progress=(k - 1) / max(settings.n_steps - 1, 1),
+    let progress=(k - 1) / max(settings[:n_steps] - 1, 1),
         forward=isodd(agent_index),
         x=forward ? -4.6 + 9.2 * progress : 4.6 - 9.2 * progress,
         y_base=-4.2 +
-            8.4 * (agent_index - 1) / max(settings.n_agents - 1, 1),
+            8.4 * (agent_index - 1) / max(settings[:n_agents] - 1, 1),
         y=clamp(
             y_base + 0.28 * sin(2π * progress + agent_index),
             -4.8,
@@ -246,15 +246,15 @@ function observation_plan(
     seed,
 )
     let rng=MersenneTwister(seed),
-        R=reshape([settings.noise_variance], 1, 1)
+        R=reshape([settings[:noise_variance]], 1, 1)
         Dict(
-            aid => map(1:settings.n_steps) do k
+            aid => map(1:settings[:n_steps]) do k
                 let agent_index=parse(Int, replace(aid, "agent" => "")),
                     X=sample_location(agent_index, k, settings),
                     H=prediction_dynamics(smodel, X),
-                    z=truth.evaluate(X) .+
-                        sqrt(settings.noise_variance) .* randn(rng, 1)
-                    (X=X, H=H, z=z, R=R)
+                    z=truth[:evaluate](X) .+
+                        sqrt(settings[:noise_variance]) .* randn(rng, 1)
+                    Dict(:X => X, :H => H, :z => z, :R => R)
                 end
             end
             for aid in agent_ids(settings)
@@ -284,8 +284,8 @@ function empty_edges(ids)
 end
 
 function communication_phase(k, settings)
-    let limited_end=settings.phase_steps[1],
-        blackout_end=limited_end + settings.phase_steps[2]
+    let limited_end=settings[:phase_steps][1],
+        blackout_end=limited_end + settings[:phase_steps][2]
         k ≤ limited_end ? :limited_communication :
         k ≤ blackout_end ? :communication_blackout :
         :limited_recovery
@@ -302,24 +302,24 @@ function publication_distance_limited_matching(k, ids, settings)
         for aid in ids
     )
     candidates = [
-        (
-            distance=norm(positions[ids[left]] - positions[ids[right]]),
-            left=ids[left],
-            right=ids[right],
+        Dict(
+            :distance => norm(positions[ids[left]] - positions[ids[right]]),
+            :left => ids[left],
+            :right => ids[right],
         )
         for left in 1:(length(ids) - 1)
         for right in (left + 1):length(ids)
         if norm(positions[ids[left]] - positions[ids[right]]) ≤
-            settings.communication_radius
+            settings[:communication_radius]
     ]
     edges = empty_edges(ids)
     used = Set{String}()
-    foreach(sort(candidates; by=item -> item.distance)) do item
-        if item.left ∉ used && item.right ∉ used
-            push!(edges[item.left], item.right)
-            push!(edges[item.right], item.left)
-            push!(used, item.left)
-            push!(used, item.right)
+    foreach(sort(candidates; by=item -> item[:distance])) do item
+        if item[:left] ∉ used && item[:right] ∉ used
+            push!(edges[item[:left]], item[:right])
+            push!(edges[item[:right]], item[:left])
+            push!(used, item[:left])
+            push!(used, item[:right])
         end
     end
     edges
@@ -364,7 +364,7 @@ function initialize_publication_network(
     let ids=agent_ids(settings),
         edges=complete_edges(ids),
         ng=init_network_graph(edges),
-        observer=LGSFObserverBehavior(settings.noise_variance)
+        observer=LGSFObserverBehavior(settings[:noise_variance])
 
         foreach(ids) do aid
             let system=PublicationScribe(1, [copy(prior)]),
@@ -467,18 +467,18 @@ function fusion_step!(
                 k,
                 aid,
                 ng,
-                settings.consensus_threshold,
-                settings.consensus_timeline,
+                settings[:consensus_threshold],
+                settings[:consensus_timeline],
             )
         end
         messages += deliver_publication_messages!(k, ng)
         all(complete) && break
     end
     finish_publication_step!(ng)
-    (
-        messages=messages,
-        bytes=messages * payload_bytes(ng),
-        iterations=iterations,
+    Dict(
+        :messages => messages,
+        :bytes => messages * payload_bytes(ng),
+        :iterations => iterations,
     )
 end
 
@@ -496,7 +496,7 @@ function fusion_step!(
         )
     end
     finish_publication_step!(ng)
-    (messages=0, bytes=0, iterations=1)
+    Dict(:messages => 0, :bytes => 0, :iterations => 1)
 end
 
 function kalman_filter_component_update!(component, ng, k)
@@ -533,10 +533,10 @@ function fusion_step!(
     end
     messages=sum(length, values(edges))
     finish_publication_step!(ng)
-    (
-        messages=messages,
-        bytes=messages * payload_bytes(ng),
-        iterations=1,
+    Dict(
+        :messages => messages,
+        :bytes => messages * payload_bytes(ng),
+        :iterations => 1,
     )
 end
 
@@ -583,10 +583,10 @@ function fusion_step!(
     end
     messages=sum(length, values(edges))
     finish_publication_step!(ng)
-    (
-        messages=messages,
-        bytes=messages * payload_bytes(ng),
-        iterations=1,
+    Dict(
+        :messages => messages,
+        :bytes => messages * payload_bytes(ng),
+        :iterations => 1,
     )
 end
 
@@ -595,11 +595,11 @@ function centralized_update(info, plans, k, params)
         innovations=map(values(plans)) do observations
             let observation=observations[k],
                 innovation=measurement_information(
-                    observation.H,
-                    observation.z,
-                    observation.R,
+                    observation[:H],
+                    observation[:z],
+                    observation[:R],
                 )
-                (innovation.δI, innovation.δi)
+                (innovation[:δI], innovation[:δi])
             end
         end,
         δI=sum(first, innovations),
@@ -616,9 +616,9 @@ end
 
 function field_moments(info, H)
     let coefficients=posterior_coefficient_moments(info),
-        μ=H * coefficients.μ,
-        σ²=vec(sum((H * coefficients.Σ) .* H; dims=2))
-        (μ=μ, σ²=max.(σ², 0.0), coefficients=coefficients)
+        μ=H * coefficients[:μ],
+        σ²=vec(sum((H * coefficients[:Σ]) .* H; dims=2))
+        Dict(:μ => μ, :σ² => max.(σ², 0.0), :coefficients => coefficients)
     end
 end
 
@@ -627,7 +627,7 @@ relative_distance(left, right) =
 
 function prediction_consensus_error(moments)
     maximum(
-        sqrt(mean(abs2, left.μ - right.μ))
+        sqrt(mean(abs2, left[:μ] - right[:μ]))
         for left in moments for right in moments
     )
 end
@@ -660,7 +660,7 @@ function normalized_nees(information, coefficients)
     isnothing(coefficients) && return NaN
     mean(information) do info
         let moments=posterior_coefficient_moments(info),
-            error=moments.μ - coefficients
+            error=moments[:μ] - coefficients
             (error ⋅ (info.Y * error)) / length(error)
         end
     end
@@ -693,57 +693,57 @@ function publication_metric_row(
 )
     let moments=map(info -> field_moments(info, H), information),
         central_moments=field_moments(central, H),
-        errors=map(model -> model.μ - truth, moments),
+        errors=map(model -> model[:μ] - truth, moments),
         truth_deviation=std(truth),
         rmses=map(error -> sqrt(mean(abs2, error)), errors),
         central_gaps=map(
-            model -> sqrt(mean(abs2, model.μ - central_moments.μ)),
+            model -> sqrt(mean(abs2, model[:μ] - central_moments[:μ])),
             moments,
         ),
         log_likelihoods=map(
             (error, model) -> predictive_log_likelihood(
                 error,
-                model.σ²,
+                model[:σ²],
                 noise_variance,
             ),
             errors,
             moments,
         ),
         coverages=map(
-            (error, model) -> interval_coverage(error, model.σ²),
+            (error, model) -> interval_coverage(error, model[:σ²]),
             errors,
             moments,
         )
-        (
-            experiment=experiment,
-            truth=truth_kind,
-            backend=backend,
-            seed=seed,
-            step=step,
-            phase=phase,
-            rmse=mean(rmses),
-            normalized_rmse=mean(rmses) / truth_deviation,
-            predictive_log_likelihood=mean(log_likelihoods),
-            interval_coverage=mean(coverages),
-            integrated_uncertainty=mean(
-                mean(model.σ²) for model in moments
+        Dict(
+            :experiment => experiment,
+            :truth => truth_kind,
+            :backend => backend,
+            :seed => seed,
+            :step => step,
+            :phase => phase,
+            :rmse => mean(rmses),
+            :normalized_rmse => mean(rmses) / truth_deviation,
+            :predictive_log_likelihood => mean(log_likelihoods),
+            :interval_coverage => mean(coverages),
+            :integrated_uncertainty => mean(
+                mean(model[:σ²]) for model in moments
             ),
-            prediction_consensus_rmse=prediction_consensus_error(moments),
-            information_consensus_error=
+            :prediction_consensus_rmse => prediction_consensus_error(moments),
+            :information_consensus_error =>
                 information_consensus_error(information),
-            centralized_prediction_gap=mean(central_gaps),
-            normalized_nees=normalized_nees(
+            :centralized_prediction_gap => mean(central_gaps),
+            :normalized_nees => normalized_nees(
                 information,
                 coefficients,
             ),
-            minimum_conservatism_eigenvalue=
+            :minimum_conservatism_eigenvalue =>
                 minimum_conservatism_eigenvalue(
                     information,
                     central,
                 ),
-            cumulative_messages=messages,
-            cumulative_bytes=bytes,
-            consensus_iterations=iterations,
+            :cumulative_messages => messages,
+            :cumulative_bytes => bytes,
+            :consensus_iterations => iterations,
         )
     end
 end
@@ -816,7 +816,7 @@ function run_publication_trial(experiment, settings, seed)
         params=publication_parameters(settings),
         smodel=initialize_SCRIBEModel_from_parameters(params),
         evaluation_locations=publication_locations(
-            settings.evaluation_points,
+            settings[:evaluation_points],
         ),
         H=prediction_dynamics(smodel, evaluation_locations),
         truth=truth_definition(
@@ -824,7 +824,7 @@ function run_publication_trial(experiment, settings, seed)
             smodel,
             evaluation_locations,
         ),
-        truth_values=truth.evaluate(evaluation_locations),
+        truth_values=truth[:evaluate](evaluation_locations),
         prior=publication_prior_information(
             smodel,
             evaluation_locations,
@@ -842,10 +842,10 @@ function run_publication_trial(experiment, settings, seed)
             for backend in backends
         ),
         communication=Dict(
-            fusion_name(backend) => (
-                messages=0,
-                bytes=0,
-                iterations=0,
+            fusion_name(backend) => Dict(
+                :messages => 0,
+                :bytes => 0,
+                :iterations => 0,
             )
             for backend in backends
         ),
@@ -862,8 +862,8 @@ function run_publication_trial(experiment, settings, seed)
                 central,
                 H,
                 truth_values,
-                truth.coefficients,
-                settings.noise_variance,
+                truth[:coefficients],
+                settings[:noise_variance],
             ),
         )
         foreach(backends) do backend
@@ -881,8 +881,8 @@ function run_publication_trial(experiment, settings, seed)
                         central,
                         H,
                         truth_values,
-                        truth.coefficients,
-                        settings.noise_variance,
+                        truth[:coefficients],
+                        settings[:noise_variance],
                         0,
                         0,
                         0,
@@ -891,7 +891,7 @@ function run_publication_trial(experiment, settings, seed)
             end
         end
 
-        foreach(1:settings.n_steps) do k
+        foreach(1:settings[:n_steps]) do k
             central=centralized_update(central, plans, k, params)
             phase=trial_phase(experiment, k, settings)
             edges=scheduled_edges(
@@ -912,8 +912,8 @@ function run_publication_trial(experiment, settings, seed)
                     central,
                     H,
                     truth_values,
-                    truth.coefficients,
-                    settings.noise_variance,
+                    truth[:coefficients],
+                    settings[:noise_variance],
                 ),
             )
 
@@ -927,13 +927,13 @@ function run_publication_trial(experiment, settings, seed)
                         settings,
                     ),
                     previous=communication[name],
-                    cumulative=(
-                        messages=previous.messages +
-                            step_communication.messages,
-                        bytes=previous.bytes +
-                            step_communication.bytes,
-                        iterations=previous.iterations +
-                            step_communication.iterations,
+                    cumulative=Dict(
+                        :messages => previous[:messages] +
+                            step_communication[:messages],
+                        :bytes => previous[:bytes] +
+                            step_communication[:bytes],
+                        :iterations => previous[:iterations] +
+                            step_communication[:iterations],
                     )
                     communication[name] = cumulative
                     push!(
@@ -949,11 +949,11 @@ function run_publication_trial(experiment, settings, seed)
                             central,
                             H,
                             truth_values,
-                            truth.coefficients,
-                            settings.noise_variance,
-                            cumulative.messages,
-                            cumulative.bytes,
-                            cumulative.iterations,
+                            truth[:coefficients],
+                            settings[:noise_variance],
+                            cumulative[:messages],
+                            cumulative[:bytes],
+                            cumulative[:iterations],
                         ),
                     )
                 end
@@ -964,13 +964,13 @@ function run_publication_trial(experiment, settings, seed)
 end
 
 function write_publication_rows(rows, output_path)
-    let fields=propertynames(first(rows))
+    let fields=keys(first(rows))
         open(output_path, "w") do io
             println(io, join(string.(fields), ","))
             foreach(rows) do row
                 println(
                     io,
-                    join((string(getproperty(row, field)) for field in fields), ","),
+                    join((string(row[field]) for field in fields), ","),
                 )
             end
         end
@@ -978,30 +978,30 @@ function write_publication_rows(rows, output_path)
 end
 
 function final_metric_summary(rows)
-    let final_step=maximum(getproperty.(rows, :step)),
-        final_rows=filter(row -> row.step == final_step, rows),
-        backends=sort(unique(getproperty.(final_rows, :backend)); by=string)
+    let final_step=maximum(getindex.(rows, :step)),
+        final_rows=filter(row -> row[:step] == final_step, rows),
+        backends=sort(unique(getindex.(final_rows, :backend)); by=string)
         map(backends) do backend
-            let selected=filter(row -> row.backend == backend, final_rows)
-                (
-                    backend=backend,
-                    rmse=mean(getproperty.(selected, :rmse)),
-                    rmse_deviation=std(
-                        getproperty.(selected, :rmse);
+            let selected=filter(row -> row[:backend] == backend, final_rows)
+                Dict(
+                    :backend => backend,
+                    :rmse => mean(getindex.(selected, :rmse)),
+                    :rmse_deviation => std(
+                        getindex.(selected, :rmse);
                         corrected=false,
                     ),
-                    centralized_gap=mean(
-                        getproperty.(
+                    :centralized_gap => mean(
+                        getindex.(
                             selected,
                             :centralized_prediction_gap,
                         ),
                     ),
-                    coverage=mean(
-                        getproperty.(selected, :interval_coverage),
+                    :coverage => mean(
+                        getindex.(selected, :interval_coverage),
                     ),
-                    normalized_nees=let values=filter(
+                    :normalized_nees => let values=filter(
                             isfinite,
-                            getproperty.(selected, :normalized_nees),
+                            getindex.(selected, :normalized_nees),
                         )
                         isempty(values) ? NaN : mean(values)
                     end,
@@ -1022,9 +1022,9 @@ function write_final_metric_summary(rows, output_path)
             foreach(summary) do row
                 println(
                     io,
-                    "$(row.backend),$(row.rmse),$(row.rmse_deviation)," *
-                    "$(row.centralized_gap),$(row.coverage)," *
-                    "$(row.normalized_nees)",
+                    "$(row[:backend]),$(row[:rmse]),$(row[:rmse_deviation])," *
+                    "$(row[:centralized_gap]),$(row[:coverage])," *
+                    "$(row[:normalized_nees])",
                 )
             end
         end
@@ -1035,11 +1035,11 @@ function print_publication_summary(experiment, rows, output_dir)
     println("Publication experiment $experiment complete.")
     foreach(final_metric_summary(rows)) do row
         println(
-            "  $(row.backend): RMSE=" *
-            "$(round(row.rmse; digits=4))±" *
-            "$(round(row.rmse_deviation; digits=4)), " *
-            "central gap=$(round(row.centralized_gap; digits=6)), " *
-            "coverage=$(round(row.coverage; digits=4))",
+            "  $(row[:backend]): RMSE=" *
+            "$(round(row[:rmse]; digits=4))±" *
+            "$(round(row[:rmse_deviation]; digits=4)), " *
+            "central gap=$(round(row[:centralized_gap]; digits=6)), " *
+            "coverage=$(round(row[:coverage]; digits=4))",
         )
     end
     println("  results: $output_dir")
@@ -1052,7 +1052,7 @@ function run_filtering_publication_experiment(
 )
     let settings=publication_settings(profile),
         rows=Any[]
-        foreach(settings.seeds) do seed
+        foreach(settings[:seeds]) do seed
             append!(
                 rows,
                 run_publication_trial(experiment, settings, seed),

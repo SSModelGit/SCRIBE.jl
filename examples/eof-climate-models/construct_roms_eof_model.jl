@@ -6,21 +6,17 @@ using Statistics: mean
 
 include("_roms_data.jl")
 
-function field_grid(values, roms)
-    grid = fill(NaN, roms.grid_shape...)
-    grid[roms.wet_mask] = values
-    permutedims(grid)
-end
-
 function field_panel(values, roms, title; color, clims)
-    heatmap(
-        field_grid(values, roms);
+    panel = plot_roms_field(
+        values,
+        roms;
         title,
         color,
         clims,
+    )
+    plot!(
+        panel;
         colorbar=false,
-        aspect_ratio=:equal,
-        axis=false,
         titlefontsize=8,
     )
 end
@@ -86,7 +82,7 @@ function save_offline_plots(model, roms, component, output_dir)
     ))
     validation_ids = round.(Int, range(
         n_training + 1,
-        size(roms.data, 2);
+        size(roms[:data], 2);
         length=4,
     ))
     snapshot_ids = vcat(training_ids, validation_ids)
@@ -94,11 +90,9 @@ function save_offline_plots(model, roms, component, output_dir)
         ["Training $snapshot" for snapshot in training_ids],
         ["Validation $snapshot" for snapshot in validation_ids],
     )
-    truth_matrix = roms.data[:, snapshot_ids]
-    coefficients = decomposition.modes' *
-        (decomposition.weights .* (truth_matrix .- decomposition.mean))
-    reconstruction = decomposition.mean .+
-        decomposition.modes * coefficients
+    truth_matrix = roms[:data][:, snapshot_ids]
+    coefficients = eof_coefficients(model, truth_matrix)
+    reconstruction = reconstruct_eof_field(model; coefficients)
     truths = [truth_matrix[:, snapshot] for snapshot in axes(truth_matrix, 2)]
     reconstructions = [
         reconstruction[:, snapshot]
@@ -171,16 +165,16 @@ function construct_roms_eof_model(;
     process_variance=1e-4,
     artifact=roms_eof_artifact(component),
 )
-    archive_data = read_roms_velocity(component)
+    archive_data = read_roms_velocity(RAMS_HEAD_ARCHIVE, component)
     roms = prepare_roms_velocity(
         archive_data;
         temporal_stride,
     )
-    training_snapshots = floor(Int, training_fraction * size(roms.data, 2))
-    training_data = roms.data[:, 1:training_snapshots]
+    training_snapshots = floor(Int, training_fraction * size(roms[:data], 2))
+    training_data = roms[:data][:, 1:training_snapshots]
     model = initialize_eof_climate_model(
         training_data;
-        locations=roms.locations,
+        locations=roms[:locations],
         process_covariance=process_variance,
         variance_fraction,
         max_rank,
@@ -195,13 +189,15 @@ function construct_roms_eof_model(;
             "temporal_stride" => temporal_stride,
             "training_snapshots" => training_snapshots,
             "process_variance" => process_variance,
-            "grid_shape" => collect(roms.grid_shape),
-            "wet_mask" => Int8.(roms.wet_mask),
+            "grid_shape" => collect(roms[:grid_shape]),
+            "wet_mask" => Int8.(roms[:wet_mask]),
         ),
     )
     decomposition = model.params.decomposition
-    reconstruction = decomposition.mean .+
-        decomposition.modes * decomposition.coefficients
+    reconstruction = reconstruct_eof_field(
+        model;
+        coefficients=decomposition.coefficients,
+    )
     training_rmse = sqrt(mean(abs2, reconstruction - training_data))
     relative_error = norm(reconstruction - training_data) /
         norm(training_data .- decomposition.mean)

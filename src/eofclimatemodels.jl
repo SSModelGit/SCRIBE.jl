@@ -1,4 +1,5 @@
 using MAT: matread, matwrite
+using Plots
 using Random: AbstractRNG, default_rng, randn
 using Statistics: mean
 
@@ -15,12 +16,14 @@ export EOFObserverBehavior, EOFObserverState
 export eof_model_data_loader, fit_eof_decomposition
 export initialize_eof_climate_model, save_eof_model
 export load_eof_model_parameters, load_eof_climate_model
-export eof_mean, eof_modes, eof_process_covariance, eof_residual_variance
+export eof_mean, eof_modes, eof_prior_covariance, eof_process_covariance
+export eof_residual_variance
 export eof_interpolation_matrix, eof_basis_at, eof_mean_at
 export eof_residual_variance_at, eof_effective_measurement_covariance
 export reconstruct_eof_field, eof_variance_fraction
+export eof_coefficients, eof_model_at_coefficients
 export eof_mode_values, eof_mode_grid
-export plot_eof_spectrum, plot_eof_mode, plot_eof_coefficients
+export plot_eof_field, plot_eof_spectrum, plot_eof_mode, plot_eof_coefficients
 
 const EOF_MODEL_FORMAT_VERSION = 3
 
@@ -166,10 +169,10 @@ function randomized_eof_svd(
 
     small_factor = svd(Q' * Z; full=false)
     keep = 1:min(target_rank, length(small_factor.S))
-    (
-        U=Q * small_factor.U[:, keep],
-        S=small_factor.S[keep],
-        V=small_factor.V[:, keep],
+    Dict(
+        :U => Q * small_factor.U[:, keep],
+        :S => small_factor.S[keep],
+        :V => small_factor.V[:, keep],
     )
 end
 
@@ -188,7 +191,7 @@ function eof_svd(
 
     if selected_algorithm == :exact
         factor = svd(Z; full=false)
-        (U=factor.U, S=factor.S, V=factor.V)
+        Dict(:U => factor.U, :S => factor.S, :V => factor.V)
     elseif selected_algorithm == :randomized
         randomized_eof_svd(
             Z,
@@ -295,22 +298,22 @@ function fit_eof_decomposition(
         rng,
     )
     retained_rank = selected_eof_rank(
-        factor.S,
+        factor[:S],
         total_variance;
         rank,
         variance_fraction,
     )
-    retained_rank <= length(factor.S) ||
+    retained_rank <= length(factor[:S]) ||
         throw(ArgumentError(
             "Requested rank $retained_rank exceeds the computed spectrum.",
         ))
 
     keep = 1:retained_rank
-    singular_values = factor.S[keep]
+    singular_values = factor[:S][keep]
     eigenvalues = abs2.(singular_values)
-    modes = factor.U[:, keep] ./ sqrt_w
+    modes = factor[:U][:, keep] ./ sqrt_w
     coefficients =
-        sqrt(n - 1) .* (singular_values .* factor.V[:, keep]')
+        sqrt(n - 1) .* (singular_values .* factor[:V][:, keep]')
     point_variance = vec(sum(abs2, Z; dims=2)) ./ w
     represented_variance = abs2.(modes) * eigenvalues
     residual_variance = max.(point_variance - represented_variance, 0.0)
@@ -354,9 +357,9 @@ end
 
 The retained mean and EOF modes define the model space. Online coefficients
 follow the structural random walk `ϕ[k+1] = ϕ[k] + w[k]`, with
-`w[k] ~ N(0, Q)`. `Q` is an operational modeling choice supplied by the user;
-it is not fitted as a directional temporal law from the offline coefficient
-history.
+`w[k] ~ N(0, Q)`. `P₀` and `Q` may be supplied directly or obtained from
+`calibrate_eof_uncertainty`. This remains a random-walk uncertainty model; it
+does not fit a directional temporal law from the offline coefficient history.
 """
 struct EOFClimateModelParameters <: SCRIBEModelParameters
     nᵩ::Int
@@ -521,6 +524,7 @@ end
 
 eof_mean(params::EOFClimateModelParameters) = params.decomposition.mean
 eof_modes(params::EOFClimateModelParameters) = params.decomposition.modes
+eof_prior_covariance(params::EOFClimateModelParameters) = params.P₀
 eof_process_covariance(params::EOFClimateModelParameters) = params.Q
 eof_residual_variance(params::EOFClimateModelParameters) =
     params.decomposition.residual_variance
@@ -554,7 +558,7 @@ function initialize_eof_climate_model(
 end
 
 """
-    initialize_eof_climate_model(source; loader_kwargs=(;), kwargs...)
+    initialize_eof_climate_model(source; loader_kwargs=Dict(), kwargs...)
 
 Load a user-defined environmental source with `eof_model_data_loader`, learn
 the fixed EOF space, and initialize its random-walk runtime model.
@@ -563,7 +567,7 @@ All keywords other than `loader_kwargs` and `k` are forwarded to
 """
 function initialize_eof_climate_model(
     source;
-    loader_kwargs::NamedTuple=(;),
+    loader_kwargs::AbstractDict{Symbol}=Dict{Symbol,Any}(),
     k::Integer=1,
     kwargs...,
 )
@@ -723,6 +727,8 @@ get_model_time(model::EOFClimateModel) = model.k
 
 eof_mean(model::EOFClimateModel) = eof_mean(model.params)
 eof_modes(model::EOFClimateModel) = eof_modes(model.params)
+eof_prior_covariance(model::EOFClimateModel) =
+    eof_prior_covariance(model.params)
 eof_process_covariance(model::EOFClimateModel) =
     eof_process_covariance(model.params)
 eof_residual_variance(model::EOFClimateModel) =
@@ -953,11 +959,46 @@ function scribe_observations(
 end
 
 function reconstruct_eof_field(
+    params::EOFClimateModelParameters;
+    coefficients=params.ϕ₀,
+)
+    eof_mean(params) .+ eof_modes(params) * coefficients
+end
+
+function reconstruct_eof_field(
     model::EOFClimateModel;
     coefficients=model.ϕ,
 )
-    eof_mean(model) + eof_modes(model) * coefficients
+    reconstruct_eof_field(model.params; coefficients)
 end
+
+"""Project a complete field snapshot into an existing EOF coordinate system."""
+function eof_coefficients(params::EOFClimateModelParameters, snapshot)
+    params.decomposition.modes' * (
+        params.decomposition.weights .* (snapshot .- params.decomposition.mean)
+    )
+end
+
+eof_coefficients(model::EOFClimateModel, snapshot) =
+    eof_coefficients(model.params, snapshot)
+
+"""Create an EOF model centered at a supplied coefficient vector."""
+function eof_model_at_coefficients(params::EOFClimateModelParameters, coefficients)
+    centered = EOFClimateModelParameters(
+        params.decomposition;
+        process_covariance=eof_process_covariance(params),
+        locations=params.locations,
+        ϕ₀=coefficients,
+        prior_covariance=eof_prior_covariance(params),
+        interpolation=params.interpolation,
+        interpolation_neighbors=params.interpolation_neighbors,
+        metadata=copy(params.metadata),
+    )
+    initialize_SCRIBEModel_from_parameters(centered)
+end
+
+eof_model_at_coefficients(model::EOFClimateModel, coefficients) =
+    eof_model_at_coefficients(model.params, coefficients)
 
 function predict_SCRIBEModel(model::EOFClimateModel, X)
     queries = eof_query_locations(X)
@@ -1030,12 +1071,12 @@ function posterior_model_moments(
     H = interpolation * eof_modes(model)
     coefficients = posterior_coefficient_moments(info)
     μ = interpolation * eof_mean(model) +
-        H * coefficients.μ
-    resolved_covariance = H * coefficients.Σ * H'
+        H * coefficients[:μ]
+    resolved_covariance = H * coefficients[:Σ] * H'
     residual_variance =
         abs2.(interpolation) * eof_residual_variance(model)
     Σ = resolved_covariance + Diagonal(residual_variance)
-    (μ=μ, Σ=prediction_symmetric(Σ))
+    Dict(:μ => μ, :Σ => prediction_symmetric(Σ))
 end
 
 """
@@ -1056,14 +1097,71 @@ function condition_on_measurement(
     H = eof_basis_at(model, X)
     anomaly = (z isa Number ? [z] : z) - eof_mean_at(model, X)
     innovation = measurement_information(H, anomaly, R)
-    Y⁺ = prediction_symmetric(info.Y + innovation.δI)
-    y⁺ = info.y + innovation.δi
-    KFEnvInfo(y⁺, Y⁺, innovation.δi, innovation.δI)
+    Y⁺ = prediction_symmetric(info.Y + innovation[:δI])
+    y⁺ = info.y + innovation[:δi]
+    KFEnvInfo(y⁺, Y⁺, innovation[:δi], innovation[:δI])
 end
 
 # ---------------------------------------------------------------------------
 # Part III: EOF-specific visualization helpers
 # ---------------------------------------------------------------------------
+
+function plot_eof_values(
+    params::EOFClimateModelParameters,
+    values;
+    title,
+    color=:balance,
+    clims=nothing,
+)
+    if size(params.locations, 2) >= 2
+        scatter(
+            params.locations[:, 1],
+            params.locations[:, 2];
+            marker_z=values,
+            markerstrokewidth=0,
+            color,
+            clims,
+            aspect_ratio=:equal,
+            title,
+            xlabel="coordinate 1",
+            ylabel="coordinate 2",
+            label=nothing,
+            colorbar_title="field value",
+        )
+    else
+        plot(
+            params.locations[:, 1],
+            values;
+            color,
+            title,
+            xlabel="coordinate",
+            ylabel="field value",
+            label=nothing,
+        )
+    end
+end
+
+"""Plot the field reconstructed from any coefficient vector in an EOF space."""
+function plot_eof_field(
+    params::EOFClimateModelParameters,
+    coefficients=params.ϕ₀;
+    title="EOF field",
+    color=:balance,
+    clims=nothing,
+)
+    values = reconstruct_eof_field(params; coefficients)
+    plot_eof_values(params, values; title, color, clims)
+end
+
+function plot_eof_field(
+    model::EOFClimateModel;
+    coefficients=model.ϕ,
+    title="EOF field",
+    color=:balance,
+    clims=nothing,
+)
+    plot_eof_field(model.params, coefficients; title, color, clims)
+end
 
 """Return each retained EOF's fraction of total weighted anomaly variance."""
 eof_variance_fraction(decomposition::EOFDecomposition) =

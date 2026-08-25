@@ -85,7 +85,7 @@ end
 function posterior_coefficient_moments(info::KFEnvInfo)
     let Σ=recover_covariance_from_info(info),
         μ=Σ * info.y
-        (μ=μ, Σ=Σ)
+        Dict(:μ => μ, :Σ => Σ)
     end
 end
 
@@ -93,9 +93,9 @@ end
 function posterior_model_moments(smodel::SCRIBEModel, info::KFEnvInfo, X)
     let H=prediction_dynamics(smodel, X),
         coefficients=posterior_coefficient_moments(info)
-        μ=H * coefficients.μ
-        Σ=H * coefficients.Σ * H'
-        (μ=μ, Σ=prediction_symmetric(Σ))
+        μ=H * coefficients[:μ]
+        Σ=H * coefficients[:Σ] * H'
+        Dict(:μ => μ, :Σ => prediction_symmetric(Σ))
     end
 end
 
@@ -103,8 +103,8 @@ end
 function posterior_measurement_moments(smodel::SCRIBEModel, info::KFEnvInfo,
                                        X, R)
     let latent=posterior_model_moments(smodel, info, X),
-        Rₛ=measurement_noise_covariance(R, length(latent.μ))
-        (μ=latent.μ, Σ=prediction_symmetric(latent.Σ + Rₛ))
+        Rₛ=measurement_noise_covariance(R, length(latent[:μ]))
+        Dict(:μ => latent[:μ], :Σ => prediction_symmetric(latent[:Σ] + Rₛ))
     end
 end
 
@@ -112,7 +112,7 @@ end
 function posterior_measurement_distribution(smodel::SCRIBEModel,
                                             info::KFEnvInfo, X, R)
     let moments=posterior_measurement_moments(smodel, info, X, R)
-        Gaussian(moments.μ, moments.Σ)
+        Gaussian(moments[:μ], moments[:Σ])
     end
 end
 
@@ -143,7 +143,7 @@ end
 function predict_model_uncertainty(smodel::SCRIBEModel, info::KFEnvInfo, X;
                                    metric::Symbol=:variance)
     let moments=posterior_model_moments(smodel, info, X),
-        uncertainty=evaluate_prediction_covariance(moments.Σ, metric)
+        uncertainty=evaluate_prediction_covariance(moments[:Σ], metric)
         X isa AbstractMatrix ?
             uncertainty :
             single_location_uncertainty(uncertainty, metric)
@@ -155,7 +155,7 @@ function predict_measurement_uncertainty(smodel::SCRIBEModel,
                                          info::KFEnvInfo, X, R;
                                          metric::Symbol=:variance)
     let moments=posterior_measurement_moments(smodel, info, X, R),
-        uncertainty=evaluate_prediction_covariance(moments.Σ, metric)
+        uncertainty=evaluate_prediction_covariance(moments[:Σ], metric)
         X isa AbstractMatrix ?
             uncertainty :
             single_location_uncertainty(uncertainty, metric)
@@ -198,7 +198,7 @@ function measurement_information(H, z, R)
         else
             let zₛ=z isa Number ? [z] : z,
                 δi=H' * (R_factor \ zₛ)
-                (δI=δI, δi=δi)
+                Dict(:δI => δI, :δi => δi)
             end
         end
     end
@@ -212,9 +212,9 @@ function condition_on_measurement(smodel::SCRIBEModel, info::KFEnvInfo,
                                   X, z, R)
     let H=prediction_dynamics(smodel, X),
         innovation=measurement_information(H, z, R),
-        Y⁺=prediction_symmetric(info.Y + innovation.δI),
-        y⁺=info.y + innovation.δi
-        KFEnvInfo(y⁺, Y⁺, innovation.δi, innovation.δI)
+        Y⁺=prediction_symmetric(info.Y + innovation[:δI]),
+        y⁺=info.y + innovation[:δi]
+        KFEnvInfo(y⁺, Y⁺, innovation[:δi], innovation[:δI])
     end
 end
 
@@ -252,8 +252,8 @@ Both information states must use the same basis functions in the same order.
 function D_KL(p::KFEnvInfo, q::KFEnvInfo)
     let p_moments=posterior_coefficient_moments(p),
         q_moments=posterior_coefficient_moments(q)
-        D_KL(p_moments.μ, p_moments.Σ,
-             q_moments.μ, q_moments.Σ)
+        D_KL(p_moments[:μ], p_moments[:Σ],
+             q_moments[:μ], q_moments[:Σ])
     end
 end
 
@@ -318,9 +318,9 @@ function integrated_variance_reduction(
 )
     let coefficients=posterior_coefficient_moments(info),
         Rₛ=measurement_noise_covariance(R, size(Hₛ, 1)),
-        S=prediction_symmetric(Hₛ * coefficients.Σ * Hₛ' + Rₛ),
+        S=prediction_symmetric(Hₛ * coefficients[:Σ] * Hₛ' + Rₛ),
         S_factor=factor_positive_definite(S),
-        cross_covariance=Hₑ * coefficients.Σ * Hₛ',
+        cross_covariance=Hₑ * coefficients[:Σ] * Hₛ',
         weighted_cross_covariance=S_factor \ cross_covariance',
         δσ²=vec(sum(
             cross_covariance .* weighted_cross_covariance';

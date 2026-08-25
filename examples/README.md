@@ -6,9 +6,9 @@ the matching directory in `examples/res/`.
 ## EOF climate models from ROMS
 
 The files under `eof-climate-models/` separate offline EOF construction from
-online agent operation. The private `_roms_data.jl` helper has three explicit
-jobs: read the MATLAB arrays, prepare wet-cell EOF snapshots, and expose a
-prepared snapshot as location-indexed recorded observations.
+online agent operation. `SCRIBE.ROMSTools` reads and prepares the archive and
+renders wet-cell fields. The private `_roms_data.jl` file now contains only
+mission paths and the recorded-snapshot sensor used by both demonstrations.
 
 Learn the fixed EOF eigen-model space from the RAMS Head ROMS archive and save
 the complete `EOFClimateModel` artifact:
@@ -39,6 +39,18 @@ The learned mean and EOF basis remain static. Online operation estimates only
 the EOF coefficient vector using identity random-walk dynamics and the declared
 process covariance `Q`. The example is therefore a sparse-observation state
 identification experiment, not a learned temporal forecast.
+
+An arbitrary coordinate in a learned EOF space can be reconstructed and
+plotted without a filtering history:
+
+```julia
+coefficients = eof_coefficients(model, snapshot)
+field = reconstruct_eof_field(model; coefficients)
+plot_eof_field(model; coefficients)
+```
+
+`plot_eof_field` uses the EOF feature locations and is independent of the data
+source. ROMS wet-mask heatmaps use `SCRIBE.ROMSTools.plot_roms_field` instead.
 
 The ROMS archive does not include `pm`, `pn`, or cell-volume metrics, so this
 example uses uniform spatial weights. Production loaders should normally

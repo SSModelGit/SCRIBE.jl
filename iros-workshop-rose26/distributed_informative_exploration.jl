@@ -50,65 +50,65 @@ Base.@kwdef mutable struct ExplorationBackendState
 end
 
 distributed_exploration_settings(profile) = @match profile begin
-    :full => (
-        seeds=Tuple(211:2:233),
-        representative_seed=221,
-        representative_agent_index=2,
-        n_agents=4,
-        n_samples=36,
-        phase_steps=(12, 12, 12),
-        communication_radius=8.25,
-        last_k=2,
-        navigation_points=33,
-        evaluation_points=41,
-        lookahead=5,
-        planning_iterations=64,
-        time_budget=0.0,
-        noise_variance=0.30,
-        process_variance=1e-10,
-        consensus_threshold=1e-7,
-        consensus_timeline=180,
-        animation_fps=3,
+    :full => Dict(
+        :seeds => Tuple(211:2:233),
+        :representative_seed => 221,
+        :representative_agent_index => 2,
+        :n_agents => 4,
+        :n_samples => 36,
+        :phase_steps => (12, 12, 12),
+        :communication_radius => 8.25,
+        :last_k => 2,
+        :navigation_points => 33,
+        :evaluation_points => 41,
+        :lookahead => 5,
+        :planning_iterations => 64,
+        :time_budget => 0.0,
+        :noise_variance => 0.30,
+        :process_variance => 1e-10,
+        :consensus_threshold => 1e-7,
+        :consensus_timeline => 180,
+        :animation_fps => 3,
     )
-    :pilot => (
-        seeds=(211, 213, 215, 217),
-        representative_seed=211,
-        representative_agent_index=1,
-        n_agents=4,
-        n_samples=36,
-        phase_steps=(12, 12, 12),
-        communication_radius=8.25,
-        last_k=2,
-        navigation_points=33,
-        evaluation_points=41,
-        lookahead=5,
-        planning_iterations=32,
-        time_budget=0.0,
-        noise_variance=0.30,
-        process_variance=1e-10,
-        consensus_threshold=1e-7,
-        consensus_timeline=180,
-        animation_fps=3,
+    :pilot => Dict(
+        :seeds => (211, 213, 215, 217),
+        :representative_seed => 211,
+        :representative_agent_index => 1,
+        :n_agents => 4,
+        :n_samples => 36,
+        :phase_steps => (12, 12, 12),
+        :communication_radius => 8.25,
+        :last_k => 2,
+        :navigation_points => 33,
+        :evaluation_points => 41,
+        :lookahead => 5,
+        :planning_iterations => 32,
+        :time_budget => 0.0,
+        :noise_variance => 0.30,
+        :process_variance => 1e-10,
+        :consensus_threshold => 1e-7,
+        :consensus_timeline => 180,
+        :animation_fps => 3,
     )
-    :smoke => (
-        seeds=(211, 213),
-        representative_seed=211,
-        representative_agent_index=1,
-        n_agents=4,
-        n_samples=9,
-        phase_steps=(3, 3, 3),
-        communication_radius=8.25,
-        last_k=2,
-        navigation_points=17,
-        evaluation_points=21,
-        lookahead=3,
-        planning_iterations=24,
-        time_budget=0.0,
-        noise_variance=0.30,
-        process_variance=1e-10,
-        consensus_threshold=1e-6,
-        consensus_timeline=120,
-        animation_fps=2,
+    :smoke => Dict(
+        :seeds => (211, 213),
+        :representative_seed => 211,
+        :representative_agent_index => 1,
+        :n_agents => 4,
+        :n_samples => 9,
+        :phase_steps => (3, 3, 3),
+        :communication_radius => 8.25,
+        :last_k => 2,
+        :navigation_points => 17,
+        :evaluation_points => 21,
+        :lookahead => 3,
+        :planning_iterations => 24,
+        :time_budget => 0.0,
+        :noise_variance => 0.30,
+        :process_variance => 1e-10,
+        :consensus_threshold => 1e-6,
+        :consensus_timeline => 120,
+        :animation_fps => 2,
     )
     _ => throw(ArgumentError(
         "Use the `full`, `pilot`, or `smoke` publication profile.",
@@ -122,15 +122,15 @@ function exploration_starts(settings)
         [-4.0 4.0],
         [4.0 4.0],
     )
-    settings.n_agents ≤ length(starts) ||
+    settings[:n_agents] ≤ length(starts) ||
         throw(ArgumentError("Add initial positions for more than four agents."))
-    [copy(starts[index]) for index in 1:settings.n_agents]
+    [copy(starts[index]) for index in 1:settings[:n_agents]]
 end
 
 function distributed_phase(step, settings)
     step == 0 && return :prior
-    limited_end = settings.phase_steps[1]
-    blackout_end = limited_end + settings.phase_steps[2]
+    limited_end = settings[:phase_steps][1]
+    blackout_end = limited_end + settings[:phase_steps][2]
     step ≤ limited_end ? :limited_communication :
     step ≤ blackout_end ? :communication_blackout :
     :limited_recovery
@@ -140,10 +140,10 @@ function distance_limited_matching(states, communication_radius)
     ids = sort(collect(keys(states)))
     edges = empty_edges(ids)
     candidates = [
-        (
-            distance=norm(states[ids[left]] - states[ids[right]]),
-            left=ids[left],
-            right=ids[right],
+        Dict(
+            :distance => norm(states[ids[left]] - states[ids[right]]),
+            :left => ids[left],
+            :right => ids[right],
         )
         for left in 1:(length(ids) - 1)
         for right in (left + 1):length(ids)
@@ -151,12 +151,12 @@ function distance_limited_matching(states, communication_radius)
             communication_radius
     ]
     used = Set{String}()
-    foreach(sort(candidates; by=item -> item.distance)) do item
-        if item.left ∉ used && item.right ∉ used
-            push!(edges[item.left], item.right)
-            push!(edges[item.right], item.left)
-            push!(used, item.left)
-            push!(used, item.right)
+    foreach(sort(candidates; by=item -> item[:distance])) do item
+        if item[:left] ∉ used && item[:right] ∉ used
+            push!(edges[item[:left]], item[:right])
+            push!(edges[item[:right]], item[:left])
+            push!(used, item[:left])
+            push!(used, item[:right])
         end
     end
     edges
@@ -165,14 +165,14 @@ end
 function distributed_edges(step, settings, states)
     distributed_phase(step, settings) == :communication_blackout &&
         return empty_edges(sort(collect(keys(states))))
-    distance_limited_matching(states, settings.communication_radius)
+    distance_limited_matching(states, settings[:communication_radius])
 end
 
 function exploration_policy(mdp, settings, seed)
     solve(
         RiskBoundedInfoMCTS(
-            lookahead=settings.lookahead,
-            time_budget=settings.time_budget,
+            lookahead=settings[:lookahead],
+            time_budget=settings[:time_budget],
             quad_order=1,
             risk_budget=1.0,
             alpha=0.0,
@@ -228,28 +228,28 @@ function field_summary(model, evaluation_locations, truth)
         model.information,
         evaluation_locations,
     )
-    prediction = moments.μ
-    variance = max.(diag(moments.Σ), 0.0)
+    prediction = moments[:μ]
+    variance = max.(diag(moments[:Σ]), 0.0)
     error = prediction - truth
-    (
-        prediction=prediction,
-        variance=variance,
-        rmse=sqrt(mean(abs2, error)),
-        coverage=mean(abs.(error) .≤ 1.96 .* sqrt.(variance)),
-        integrated_variance=mean(variance),
+    Dict(
+        :prediction => prediction,
+        :variance => variance,
+        :rmse => sqrt(mean(abs2, error)),
+        :coverage => mean(abs.(error) .≤ 1.96 .* sqrt.(variance)),
+        :integrated_variance => mean(variance),
     )
 end
 
 function exploration_consensus_rmse(summaries)
     maximum(
-        sqrt(mean(abs2, left.prediction - right.prediction))
+        sqrt(mean(abs2, left[:prediction] - right[:prediction]))
         for left in values(summaries) for right in values(summaries)
     )
 end
 
 function exploration_oracle_gap(summaries, oracle_summary)
     mean(
-        sqrt(mean(abs2, summary.prediction - oracle_summary.prediction))
+        sqrt(mean(abs2, summary[:prediction] - oracle_summary[:prediction]))
         for summary in values(summaries)
     )
 end
@@ -317,43 +317,43 @@ function exploration_metric_row(
     )
     available_edges = distributed_edges(step, settings, states)
     components = connected_components(available_edges)
-    (
-        backend=backend,
-        seed=seed,
-        step=step,
-        phase=distributed_phase(step, settings),
-        samples=step * settings.n_agents,
-        mean_agent_rmse=mean(summary.rmse for summary in values(summaries)),
-        worst_agent_rmse=maximum(summary.rmse for summary in values(summaries)),
-        mean_agent_coverage=
-            mean(summary.coverage for summary in values(summaries)),
-        mean_integrated_variance=
-            mean(summary.integrated_variance for summary in values(summaries)),
-        prediction_consensus_rmse=exploration_consensus_rmse(summaries),
-        trajectory_oracle_gap=exploration_oracle_gap(
+    Dict(
+        :backend => backend,
+        :seed => seed,
+        :step => step,
+        :phase => distributed_phase(step, settings),
+        :samples => step * settings[:n_agents],
+        :mean_agent_rmse => mean(summary[:rmse] for summary in values(summaries)),
+        :worst_agent_rmse => maximum(summary[:rmse] for summary in values(summaries)),
+        :mean_agent_coverage =>
+            mean(summary[:coverage] for summary in values(summaries)),
+        :mean_integrated_variance =>
+            mean(summary[:integrated_variance] for summary in values(summaries)),
+        :prediction_consensus_rmse => exploration_consensus_rmse(summaries),
+        :trajectory_oracle_gap => exploration_oracle_gap(
             summaries,
             oracle_summary,
         ),
-        oracle_rmse=oracle_summary.rmse,
-        exploration_rmse_reduction=100 * (
-            prior_summary.rmse - oracle_summary.rmse
-        ) / prior_summary.rmse,
-        oracle_integrated_variance=oracle_summary.integrated_variance,
-        cumulative_expected_information=cumulative_reward,
-        mean_pairwise_distance=mean_pairwise_distance(
+        :oracle_rmse => oracle_summary[:rmse],
+        :exploration_rmse_reduction => 100 * (
+            prior_summary[:rmse] - oracle_summary[:rmse]
+        ) / prior_summary[:rmse],
+        :oracle_integrated_variance => oracle_summary[:integrated_variance],
+        :cumulative_expected_information => cumulative_reward,
+        :mean_pairwise_distance => mean_pairwise_distance(
             collect(values(states)),
         ),
-        unique_sample_fraction=unique_sample_fraction(
+        :unique_sample_fraction => unique_sample_fraction(
             paths,
             mdp.step_size,
         ),
-        available_communication_links=
+        :available_communication_links =>
             sum(length, values(available_edges)) ÷ 2,
-        largest_communication_component=
+        :largest_communication_component =>
             maximum(length, components),
-        cumulative_messages=communication.messages,
-        cumulative_bytes=communication.bytes,
-        cumulative_consensus_iterations=communication.iterations,
+        :cumulative_messages => communication[:messages],
+        :cumulative_bytes => communication[:bytes],
+        :cumulative_consensus_iterations => communication[:iterations],
     )
 end
 
@@ -369,11 +369,11 @@ function observe_team!(
         state = states[aid]
         observation = only(mdp.ground_truth(state)) +
             sqrt(mdp.initial_model.R) * randn(noise_rngs[aid])
-        item = (
-            X=copy(state),
-            H=prediction_dynamics(mdp.initial_model.smodel, state),
-            z=[observation],
-            R=reshape([mdp.initial_model.R], 1, 1),
+        item = Dict(
+            :X => copy(state),
+            :H => prediction_dynamics(mdp.initial_model.smodel, state),
+            :z => [observation],
+            :R => reshape([mdp.initial_model.R], 1, 1),
         )
         push!(plans[aid], item)
         push!(paths[aid], copy(state))
@@ -398,7 +398,7 @@ function advance_team!(
             policies[aid],
             state,
             model,
-            settings.planning_iterations,
+            settings[:planning_iterations],
         )
         next_state = gen(
             mdp,
@@ -414,16 +414,16 @@ end
 
 function initialize_backend_state(backend, problem, settings, seed)
     ids = agent_ids(settings)
-    prior = problem.mdp.initial_model.information
+    prior = problem[:mdp].initial_model.information
     information = Dict(aid => copy(prior) for aid in ids)
     states = Dict(
         aid => exploration_starts(settings)[index]
         for (index, aid) in enumerate(ids)
     )
     models = backend_models(
-        problem.mdp.initial_model.smodel,
+        problem[:mdp].initial_model.smodel,
         information,
-        problem.mdp.initial_model.R,
+        problem[:mdp].initial_model.R,
     )
     ExplorationBackendState(
         ids=ids,
@@ -431,7 +431,7 @@ function initialize_backend_state(backend, problem, settings, seed)
         models=models,
         policies=Dict(
             aid => exploration_policy(
-                problem.mdp,
+                problem[:mdp],
                 settings,
                 seed + 10_000 * index,
             )
@@ -453,16 +453,16 @@ function initialize_backend_state(backend, problem, settings, seed)
             for aid in ids
         ),
         oracle=SCRIBEModelState(
-            problem.mdp.initial_model.smodel,
+            problem[:mdp].initial_model.smodel,
             copy(prior),
-            problem.mdp.initial_model.R,
+            problem[:mdp].initial_model.R,
         ),
         network=nothing,
         known_observations=Dict(
             aid => Set{Tuple{String, Int}}()
             for aid in ids
         ),
-        communication=(messages=0, bytes=0, iterations=0),
+        communication=Dict(:messages => 0, :bytes => 0, :iterations => 0),
         cumulative_reward=0.0,
     )
 end
@@ -488,11 +488,11 @@ function replay_information(
         innovations = map(available) do (source, observation_step)
             observation = plans[source][observation_step]
             innovation = measurement_information(
-                observation.H,
-                observation.z,
-                observation.R,
+                observation[:H],
+                observation[:z],
+                observation[:R],
             )
-            (innovation.δI, innovation.δi)
+            (innovation[:δI], innovation[:δi])
         end
         δI = isempty(innovations) ?
             zeros(size(Y_prior)) :
@@ -513,9 +513,9 @@ end
 
 function observation_record_bytes(observation)
     sizeof(Float64) * (
-        length(observation.X) +
-        length(observation.z) +
-        length(observation.R)
+        length(observation[:X]) +
+        length(observation[:z]) +
+        length(observation[:R])
     )
 end
 
@@ -542,7 +542,7 @@ function last_k_observation_step!(state, problem, settings, step)
                 by=observation_id -> (last(observation_id), first(observation_id)),
                 rev=true,
             )
-            selected = missing[1:min(settings.last_k, length(missing))]
+            selected = missing[1:min(settings[:last_k], length(missing))]
             if !isempty(selected)
                 messages += 1
                 union!(transfers[receiver], selected)
@@ -557,12 +557,12 @@ function last_k_observation_step!(state, problem, settings, step)
     foreach(state.ids) do aid
         union!(state.known_observations[aid], transfers[aid])
     end
-    params = problem.mdp.initial_model.smodel.params
+    params = problem[:mdp].initial_model.smodel.params
     state.models = Dict(
         aid => SCRIBEModelState(
             state.oracle.smodel,
             replay_information(
-                problem.mdp.initial_model.information,
+                problem[:mdp].initial_model.information,
                 params,
                 state.plans,
                 state.known_observations[aid],
@@ -572,10 +572,10 @@ function last_k_observation_step!(state, problem, settings, step)
         )
         for aid in state.ids
     )
-    (
-        messages=messages,
-        bytes=bytes,
-        iterations=1,
+    Dict(
+        :messages => messages,
+        :bytes => bytes,
+        :iterations => 1,
     )
 end
 
@@ -586,7 +586,7 @@ function update_backend_information!(
     settings,
     step,
 )
-    params = problem.mdp.initial_model.smodel.params
+    params = problem[:mdp].initial_model.smodel.params
     state.oracle = SCRIBEModelState(
         state.oracle.smodel,
         centralized_update(
@@ -613,12 +613,12 @@ function update_backend_information!(
             settings,
             step,
         )
-        state.communication = (
-            messages=state.communication.messages +
-                step_communication.messages,
-            bytes=state.communication.bytes + step_communication.bytes,
-            iterations=state.communication.iterations +
-                step_communication.iterations,
+        state.communication = Dict(
+            :messages => state.communication[:messages] +
+                step_communication[:messages],
+            :bytes => state.communication[:bytes] + step_communication[:bytes],
+            :iterations => state.communication[:iterations] +
+                step_communication[:iterations],
         )
     elseif backend == :independent
         state.models = Dict(
@@ -644,7 +644,7 @@ function update_backend_information!(
         if isnothing(state.network)
             state.network = initialize_publication_network(
                 params,
-                problem.mdp.initial_model.information,
+                problem[:mdp].initial_model.information,
                 state.plans,
                 settings,
             )
@@ -661,12 +661,12 @@ function update_backend_information!(
             distributed_edges(step, settings, state.states),
             settings,
         )
-        state.communication = (
-            messages=state.communication.messages +
-                step_communication.messages,
-            bytes=state.communication.bytes + step_communication.bytes,
-            iterations=state.communication.iterations +
-                step_communication.iterations,
+        state.communication = Dict(
+            :messages => state.communication[:messages] +
+                step_communication[:messages],
+            :bytes => state.communication[:bytes] + step_communication[:bytes],
+            :iterations => state.communication[:iterations] +
+                step_communication[:iterations],
         )
         current = Dict(
             aid => state.network.vertices[aid].agent.information[end]
@@ -690,7 +690,7 @@ function run_distributed_exploration_backend(
     keep_history=false,
 )
     state = initialize_backend_state(backend, problem, settings, seed)
-    truth = problem.mdp.ground_truth(problem.mdp.evaluation_grid.locations)
+    truth = problem[:mdp].ground_truth(problem[:mdp].evaluation_grid.locations)
     rows = Any[
         exploration_metric_row(
             backend,
@@ -699,7 +699,7 @@ function run_distributed_exploration_backend(
             settings,
             state.models,
             state.oracle,
-            problem.mdp,
+            problem[:mdp],
             truth,
             state.states,
             state.paths,
@@ -708,13 +708,13 @@ function run_distributed_exploration_backend(
         ),
     ]
 
-    foreach(1:settings.n_samples) do step
+    foreach(1:settings[:n_samples]) do step
         if step > 1
             state.states, reward = advance_team!(
                 state.policies,
                 state.models,
                 state.states,
-                problem.mdp,
+                problem[:mdp],
                 settings,
                 state.dynamics_rngs,
             )
@@ -722,7 +722,7 @@ function run_distributed_exploration_backend(
         else
             state.cumulative_reward += sum(
                 expected_information_gain(
-                    problem.mdp,
+                    problem[:mdp],
                     state.models[aid],
                     state.states[aid],
                     1,
@@ -734,7 +734,7 @@ function run_distributed_exploration_backend(
             state.plans,
             state.paths,
             state.observations,
-            problem.mdp,
+            problem[:mdp],
             state.states,
             state.noise_rngs,
         )
@@ -759,7 +759,7 @@ function run_distributed_exploration_backend(
                 settings,
                 state.models,
                 state.oracle,
-                problem.mdp,
+                problem[:mdp],
                 truth,
                 state.states,
                 state.paths,
@@ -768,26 +768,26 @@ function run_distributed_exploration_backend(
             ),
         )
     end
-    (
-        rows=rows,
-        models=state.models,
-        histories=state.histories,
-        paths=state.paths,
-        observations=state.observations,
-        truth=truth,
-        grid=problem.mdp.evaluation_grid,
+    Dict(
+        :rows => rows,
+        :models => state.models,
+        :histories => state.histories,
+        :paths => state.paths,
+        :observations => state.observations,
+        :truth => truth,
+        :grid => problem[:mdp].evaluation_grid,
     )
 end
 
 function write_exploration_rows(rows, output_path)
-    fields = propertynames(first(rows))
+    fields = keys(first(rows))
     open(output_path, "w") do io
         println(io, join(string.(fields), ","))
         foreach(rows) do row
             println(
                 io,
                 join(
-                    (string(getproperty(row, field)) for field in fields),
+                    (string(row[field]) for field in fields),
                     ",",
                 ),
             )
@@ -816,24 +816,24 @@ function read_exploration_rows(input_path)
             field in integer_fields ? parse(Int, raw_value) :
             parse(Float64, raw_value)
         end
-        NamedTuple{Tuple(fields)}(Tuple(values))
+        Dict(zip(fields, values))
     end
 end
 
 function exploration_aggregate(rows, backend, metric)
-    selected = filter(row -> row.backend == backend, rows)
-    steps = sort(unique(getproperty.(selected, :step)))
+    selected = filter(row -> row[:backend] == backend, rows)
+    steps = sort(unique(getindex.(selected, :step)))
     values = [
-        getproperty.(
-            filter(row -> row.step == step, selected),
+        getindex.(
+            filter(row -> row[:step] == step, selected),
             metric,
         )
         for step in steps
     ]
-    (
-        steps=steps,
-        mean=mean.(values),
-        deviation=map(values) do item
+    Dict(
+        :steps => steps,
+        :mean => mean.(values),
+        :deviation => map(values) do item
             std(item; corrected=false)
         end,
     )
@@ -846,24 +846,24 @@ function relative_exploration_aggregate(
     reference_backend,
 )
     reference = Dict(
-        (row.seed, row.step) => getproperty(row, metric)
+        (row[:seed], row[:step]) => row[metric]
         for row in rows
-        if row.backend == reference_backend
+        if row[:backend] == reference_backend
     )
-    selected = filter(row -> row.backend == backend, rows)
-    steps = sort(unique(getproperty.(selected, :step)))
+    selected = filter(row -> row[:backend] == backend, rows)
+    steps = sort(unique(getindex.(selected, :step)))
     values = [
         [
-            getproperty(row, metric) / reference[(row.seed, row.step)]
+            row[metric] / reference[(row[:seed], row[:step])]
             for row in selected
-            if row.step == step
+            if row[:step] == step
         ]
         for step in steps
     ]
-    (
-        steps=steps,
-        mean=mean.(values),
-        deviation=map(values) do item
+    Dict(
+        :steps => steps,
+        :mean => mean.(values),
+        :deviation => map(values) do item
             std(item; corrected=false)
         end,
     )
@@ -899,14 +899,14 @@ function exploration_curve(
                 relative_to,
             )
         values = logscale ?
-            log10.(max.(aggregate.mean, eps())) :
-            value_scale .* aggregate.mean
+            log10.(max.(aggregate[:mean], eps())) :
+            value_scale .* aggregate[:mean]
         deviations = logscale ?
             zeros(length(values)) :
-            value_scale .* aggregate.deviation
+            value_scale .* aggregate[:deviation]
         plot!(
             plot_object,
-            aggregate.steps,
+            aggregate[:steps],
             values;
             ribbon=deviations,
             color=EXPLORATION_COLORS[backend],
@@ -919,8 +919,8 @@ function exploration_curve(
 end
 
 function exploration_phase_boundaries!(plot_object, settings)
-    blackout_start = settings.phase_steps[1]
-    blackout_end = blackout_start + settings.phase_steps[2]
+    blackout_start = settings[:phase_steps][1]
+    blackout_end = blackout_start + settings[:phase_steps][2]
     vspan!(
         plot_object,
         [blackout_start, blackout_end];
@@ -995,12 +995,12 @@ function save_distributed_exploration_figure(rows, settings, output_dir)
 end
 
 function path_panel(result, title)
-    grid = result.grid
-    field_extent = maximum(abs, result.truth)
+    grid = result[:grid]
+    field_extent = maximum(abs, result[:truth])
     plot_object = heatmap(
         grid.x,
         grid.y,
-        reshape(result.truth, length(grid.x), length(grid.y))';
+        reshape(result[:truth], length(grid.x), length(grid.y))';
         color=:balance,
         clims=(-field_extent, field_extent),
         aspect_ratio=:equal,
@@ -1010,8 +1010,8 @@ function path_panel(result, title)
         colorbar=false,
     )
     colors = (:dodgerblue, :darkorange, :limegreen, :magenta)
-    foreach(enumerate(sort(collect(keys(result.paths))))) do (index, aid)
-        path = reduce(vcat, result.paths[aid])
+    foreach(enumerate(sort(collect(keys(result[:paths]))))) do (index, aid)
+        path = reduce(vcat, result[:paths][aid])
     plot!(
         plot_object,
         path[:, 1],
@@ -1027,18 +1027,18 @@ function path_panel(result, title)
 end
 
 function posterior_panel(result, aid, frame_index, title)
-    model = result.histories[aid][frame_index]
+    model = result[:histories][aid][frame_index]
     moments = posterior_model_moments(
         model.smodel,
         model.information,
-        result.grid.locations,
+        result[:grid].locations,
     )
     heatmap(
-        result.grid.x,
-        result.grid.y,
-        reshape(moments.μ, length(result.grid.x), length(result.grid.y))';
+        result[:grid].x,
+        result[:grid].y,
+        reshape(moments[:μ], length(result[:grid].x), length(result[:grid].y))';
         color=:balance,
-        clims=(-maximum(abs, result.truth), maximum(abs, result.truth)),
+        clims=(-maximum(abs, result[:truth]), maximum(abs, result[:truth])),
         aspect_ratio=:equal,
         title,
         xlabel="x [km]",
@@ -1049,15 +1049,15 @@ end
 
 function truth_panel(result)
     heatmap(
-        result.grid.x,
-        result.grid.y,
+        result[:grid].x,
+        result[:grid].y,
         reshape(
-            result.truth,
-            length(result.grid.x),
-            length(result.grid.y),
+            result[:truth],
+            length(result[:grid].x),
+            length(result[:grid].y),
         )';
         color=:balance,
-        clims=(-maximum(abs, result.truth), maximum(abs, result.truth)),
+        clims=(-maximum(abs, result[:truth]), maximum(abs, result[:truth])),
         aspect_ratio=:equal,
         title="Ground Truth",
         xlabel="x [km]",
@@ -1116,8 +1116,8 @@ function trajectory_reconstruction_panel(result, aid, frame_index)
         "Final SCRIBE Reconstruction\nand Robot Trajectories",
     )
     colors = (:dodgerblue, :darkorange, :limegreen, :magenta)
-    foreach(enumerate(sort(collect(keys(result.paths))))) do (index, path_id)
-        path = reduce(vcat, result.paths[path_id])
+    foreach(enumerate(sort(collect(keys(result[:paths]))))) do (index, path_id)
+        path = reduce(vcat, result[:paths][path_id])
         plot!(
             plot_object,
             path[:, 1],
@@ -1152,8 +1152,8 @@ end
 function save_field_reconstruction_figure(results, settings, output_dir)
     scribe = results[:scribe]
     agent_ids = sort(collect(keys(scribe.histories)))
-    aid = agent_ids[settings.representative_agent_index]
-    final_frame = settings.n_samples + 1
+    aid = agent_ids[settings[:representative_agent_index]]
+    final_frame = settings[:n_samples] + 1
     figure = plot(
         truth_panel(scribe),
         trajectory_reconstruction_panel(
@@ -1268,9 +1268,9 @@ function save_representative_figure(results, settings, output_dir)
     scribe = results[:scribe]
     independent = results[:independent]
     frame_indices = (
-        settings.phase_steps[1] + 1,
-        sum(settings.phase_steps[1:2]) + 1,
-        settings.n_samples + 1,
+        settings[:phase_steps][1] + 1,
+        sum(settings[:phase_steps][1:2]) + 1,
+        settings[:n_samples] + 1,
     )
     aid = first(sort(collect(keys(scribe.histories))))
     figure = plot(
@@ -1311,15 +1311,15 @@ function save_representative_figure(results, settings, output_dir)
 end
 
 function save_representative_animation(result, settings, output_dir)
-    ids = sort(collect(keys(result.histories)))
+    ids = sort(collect(keys(result[:histories])))
     colors = (:dodgerblue, :darkorange, :limegreen, :magenta)
-    grid = result.grid
-    field_extent = maximum(abs, result.truth)
-    animation = @animate for frame_index in 1:(settings.n_samples + 1)
+    grid = result[:grid]
+    field_extent = maximum(abs, result[:truth])
+    animation = @animate for frame_index in 1:(settings[:n_samples] + 1)
         path_plot = heatmap(
             grid.x,
             grid.y,
-            reshape(result.truth, length(grid.x), length(grid.y))';
+            reshape(result[:truth], length(grid.x), length(grid.y))';
             color=:balance,
             clims=(-field_extent, field_extent),
             aspect_ratio=:equal,
@@ -1329,9 +1329,9 @@ function save_representative_animation(result, settings, output_dir)
             colorbar=false,
         )
         foreach(enumerate(ids)) do (index, aid)
-            n_path = min(frame_index - 1, length(result.paths[aid]))
+            n_path = min(frame_index - 1, length(result[:paths][aid]))
             if n_path > 0
-                path = reduce(vcat, result.paths[aid][1:n_path])
+                path = reduce(vcat, result[:paths][aid][1:n_path])
                 plot!(
                     path_plot,
                     path[:, 1],
@@ -1362,51 +1362,51 @@ function save_representative_animation(result, settings, output_dir)
         )
     end
     output_path = joinpath(output_dir, "scribe_distributed_exploration.gif")
-    gif(animation, output_path; fps=settings.animation_fps)
+    gif(animation, output_path; fps=settings[:animation_fps])
     println("Animation saved at $output_path")
     output_path
 end
 
 function final_exploration_summary(rows)
-    final_step = maximum(getproperty.(rows, :step))
+    final_step = maximum(getindex.(rows, :step))
     map(EXPLORATION_BACKENDS) do backend
         selected = filter(
-            row -> row.backend == backend && row.step == final_step,
+            row -> row[:backend] == backend && row[:step] == final_step,
             rows,
         )
-        (
-            backend=backend,
-            rmse=mean(getproperty.(selected, :mean_agent_rmse)),
-            rmse_std=std(
-                getproperty.(selected, :mean_agent_rmse);
+        Dict(
+            :backend => backend,
+            :rmse => mean(getindex.(selected, :mean_agent_rmse)),
+            :rmse_std => std(
+                getindex.(selected, :mean_agent_rmse);
                 corrected=false,
             ),
-            uncertainty=mean(
-                getproperty.(selected, :mean_integrated_variance),
+            :uncertainty => mean(
+                getindex.(selected, :mean_integrated_variance),
             ),
-            consensus=mean(
-                getproperty.(selected, :prediction_consensus_rmse),
+            :consensus => mean(
+                getindex.(selected, :prediction_consensus_rmse),
             ),
-            oracle_gap=mean(
-                getproperty.(selected, :trajectory_oracle_gap),
+            :oracle_gap => mean(
+                getindex.(selected, :trajectory_oracle_gap),
             ),
-            unique_fraction=mean(
-                getproperty.(selected, :unique_sample_fraction),
+            :unique_fraction => mean(
+                getindex.(selected, :unique_sample_fraction),
             ),
-            oracle_rmse=mean(getproperty.(selected, :oracle_rmse)),
-            exploration_reduction=mean(
-                getproperty.(selected, :exploration_rmse_reduction),
+            :oracle_rmse => mean(getindex.(selected, :oracle_rmse)),
+            :exploration_reduction => mean(
+                getindex.(selected, :exploration_rmse_reduction),
             ),
-            oracle_variance=mean(
-                getproperty.(selected, :oracle_integrated_variance),
+            :oracle_variance => mean(
+                getindex.(selected, :oracle_integrated_variance),
             ),
-            pairwise_distance=mean(
-                getproperty.(selected, :mean_pairwise_distance),
+            :pairwise_distance => mean(
+                getindex.(selected, :mean_pairwise_distance),
             ),
-            coverage=mean(
-                getproperty.(selected, :mean_agent_coverage),
+            :coverage => mean(
+                getindex.(selected, :mean_agent_coverage),
             ),
-            bytes=mean(getproperty.(selected, :cumulative_bytes)),
+            :bytes => mean(getindex.(selected, :cumulative_bytes)),
         )
     end
 end
@@ -1426,12 +1426,12 @@ function write_exploration_summary(rows, output_path)
         foreach(summary) do row
             println(
                 io,
-                "$(row.backend),$(row.rmse),$(row.rmse_std)," *
-                "$(row.uncertainty),$(row.consensus)," *
-                "$(row.oracle_gap),$(row.unique_fraction)," *
-                "$(row.oracle_rmse),$(row.exploration_reduction)," *
-                "$(row.oracle_variance),$(row.pairwise_distance)," *
-                "$(row.coverage),$(row.bytes)",
+                "$(row[:backend]),$(row[:rmse]),$(row[:rmse_std])," *
+                "$(row[:uncertainty]),$(row[:consensus])," *
+                "$(row[:oracle_gap]),$(row[:unique_fraction])," *
+                "$(row[:oracle_rmse]),$(row[:exploration_reduction])," *
+                "$(row[:oracle_variance]),$(row[:pairwise_distance])," *
+                "$(row[:coverage]),$(row[:bytes])",
             )
         end
     end
@@ -1441,12 +1441,12 @@ function print_distributed_exploration_summary(rows, output_dir)
     println("Distributed informative exploration complete.")
     foreach(final_exploration_summary(rows)) do row
         println(
-            "  $(row.backend): RMSE=" *
-            "$(round(row.rmse; digits=4))±" *
-            "$(round(row.rmse_std; digits=4)), variance=" *
-            "$(round(row.uncertainty; digits=4)), oracle gap=" *
-            "$(round(row.oracle_gap; digits=4)), exploration reduction=" *
-            "$(round(row.exploration_reduction; digits=1))%",
+            "  $(row[:backend]): RMSE=" *
+            "$(round(row[:rmse]; digits=4))±" *
+            "$(round(row[:rmse_std]; digits=4)), variance=" *
+            "$(round(row[:uncertainty]; digits=4)), oracle gap=" *
+            "$(round(row[:oracle_gap]; digits=4)), exploration reduction=" *
+            "$(round(row[:exploration_reduction]; digits=1))%",
         )
     end
     println("  results: $output_dir")
@@ -1466,10 +1466,10 @@ function distributed_exploration_main(
     mkpath(output_dir)
     rows = Any[]
     representative = Dict{Symbol, Any}()
-    foreach(settings.seeds) do seed
+    foreach(settings[:seeds]) do seed
         problem = exploration_problem(settings)
         foreach(EXPLORATION_BACKENDS) do backend
-            keep_history = seed == settings.representative_seed
+            keep_history = seed == settings[:representative_seed]
             result = run_distributed_exploration_backend(
                 backend,
                 problem,
@@ -1477,7 +1477,7 @@ function distributed_exploration_main(
                 seed;
                 keep_history,
             )
-            append!(rows, result.rows)
+            append!(rows, result[:rows])
             keep_history && (representative[backend] = result)
             GC.gc()
         end
@@ -1502,7 +1502,7 @@ function distributed_exploration_main(
             output_dir,
         )
     print_distributed_exploration_summary(rows, output_dir)
-    (rows=rows, representative=representative)
+    Dict(:rows => rows, :representative => representative)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

@@ -123,6 +123,13 @@ eof_model = initialize_SCRIBEModel_from_parameters(eof_parameters)
 
 full_field = reconstruct_eof_field(eof_model)
 values_at_X = predict_SCRIBEModel(eof_model, X)
+
+candidate_coefficients = eof_coefficients(eof_model, candidate_snapshot)
+candidate_field = reconstruct_eof_field(
+    eof_model;
+    coefficients=candidate_coefficients,
+)
+plot_eof_field(eof_model; coefficients=candidate_coefficients)
 ```
 
 The learned mean and EOF vectors remain fixed online. The filter
@@ -170,11 +177,12 @@ parameters = EOFClimateModelParameters(
 
 Real ROMS files usually require masking land/fill values, selecting
 depth and variables, reconciling staggered grids, arranging the feature
-rows, and possibly subsampling time. Put that policy in a small loader
-that returns the required snapshot matrix; see
-[\_roms\_data.jl](examples/eof-climate-models/_roms_data.jl). A reusable
-source type can specialize `eof_model_data_loader(source; ...)` and then
-use `initialize_eof_climate_model(source; loader_kwargs, ...)`.
+rows, and possibly subsampling time. Reusable ROMS loading, wet-cell
+preparation, curl construction, EOF fitting, and field rendering live in
+`SCRIBE.ROMSTools`. The EOF examples retain only their archive paths, mission
+choices, and recorded-snapshot sensor. A different reusable source type can
+specialize `eof_model_data_loader(source; ...)` and then use
+`initialize_eof_climate_model(source; loader_kwargs, ...)`.
 
 Once the decomposition and operational priors are chosen, save the
 complete versioned SCRIBE artifact instead of manually writing

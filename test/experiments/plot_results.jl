@@ -177,33 +177,33 @@ function communication_comparison_plots(no_comm_run::String,
     ]
     run_data = [
         let data = load("test/res_data/" * run_name * ".jld2")
-            (
-                label=label,
-                run_name=run_name,
-                linestyle=linestyle,
-                gt_model=data["gt_model"],
-                ng=data["ng"],
-                space_corners=data["space_corners"],
+            Dict(
+                :label => label,
+                :run_name => run_name,
+                :linestyle => linestyle,
+                :gt_model => data["gt_model"],
+                :ng => data["ng"],
+                :space_corners => data["space_corners"],
             )
         end
         for (label, run_name, linestyle) in run_specs
     ]
 
-    @assert length(run_data[1].gt_model) == length(run_data[2].gt_model)
+    @assert length(run_data[1][:gt_model]) == length(run_data[2][:gt_model])
     @assert all(
         isapprox(
-            run_data[1].gt_model[k].ϕ,
-            run_data[2].gt_model[k].ϕ;
+            run_data[1][:gt_model][k].ϕ,
+            run_data[2][:gt_model][k].ϕ;
             rtol=0,
             atol=0,
         )
-        for k in eachindex(run_data[1].gt_model)
+        for k in eachindex(run_data[1][:gt_model])
     ) "Matched comparison did not reproduce identical ground-truth states."
 
-    agent_ids = sort(collect(keys(run_data[1].ng.vertices)))
+    agent_ids = sort(collect(keys(run_data[1][:ng].vertices)))
     agent_colors = [:royalblue, :darkorange, :seagreen]
     x_range =
-        run_data[1].space_corners[1]:grid_step:run_data[1].space_corners[2]
+        run_data[1][:space_corners][1]:grid_step:run_data[1][:space_corners][2]
     locations = [[x, y] for x in x_range for y in x_range]
 
     rmse_plot = plot(
@@ -220,20 +220,20 @@ function communication_comparison_plots(no_comm_run::String,
         prediction_cache = Dict(
             (aid, k) => [
                 predict_SCRIBEModel(
-                    data.ng.vertices[aid].agent.estimates[k].estimate,
+                    data[:ng].vertices[aid].agent.estimates[k].estimate,
                     location,
                 )
                 for location in locations
             ]
             for aid in agent_ids
-            for k in eachindex(data.gt_model)
+            for k in eachindex(data[:gt_model])
         )
         ground_truth_cache = Dict(
             k => [
-                predict_SCRIBEModel(data.gt_model[k], location)
+                predict_SCRIBEModel(data[:gt_model][k], location)
                 for location in locations
             ]
-            for k in eachindex(data.gt_model)
+            for k in eachindex(data[:gt_model])
         )
 
         for (agent_index, aid) in enumerate(agent_ids)
@@ -242,16 +242,16 @@ function communication_comparison_plots(no_comm_run::String,
                     (prediction_cache[(aid, k)] .-
                      ground_truth_cache[k]).^2,
                 ))
-                for k in eachindex(data.gt_model)
+                for k in eachindex(data[:gt_model])
             ]
             plot!(
                 rmse_plot,
-                eachindex(data.gt_model),
+                eachindex(data[:gt_model]),
                 rmses;
                 color=agent_colors[agent_index],
-                linestyle=data.linestyle,
+                linestyle=data[:linestyle],
                 linewidth=2,
-                label=data.label * " / " * aid,
+                label=data[:label] * " / " * aid,
             )
         end
 
@@ -264,21 +264,21 @@ function communication_comparison_plots(no_comm_run::String,
                 for left in agent_ids
                 for right in agent_ids
             )
-            for k in eachindex(data.gt_model)
+            for k in eachindex(data[:gt_model])
         ]
         plot!(
             consensus_plot,
-            eachindex(data.gt_model),
+            eachindex(data[:gt_model]),
             disagreement;
-            linestyle=data.linestyle,
+            linestyle=data[:linestyle],
             linewidth=3,
-            label=data.label,
+            label=data[:label],
         )
     end
 
     comparison_stem =
         "test/res_plots/3a_121w_fullGT_none_vs_dist_lowo_" *
-        string(length(run_data[1].gt_model) - 1) * "s"
+        string(length(run_data[1][:gt_model]) - 1) * "s"
     performance_path = comparison_stem * "_performance.png"
     mkpath(dirname(performance_path))
     performance_figure = plot(
@@ -292,9 +292,9 @@ function communication_comparison_plots(no_comm_run::String,
 
     final_error_values = Dict{Tuple{Int, String}, Matrix{Float64}}()
     for (case_index, data) in enumerate(run_data)
-        ground_truth = data.gt_model[end]
+        ground_truth = data[:gt_model][end]
         for aid in agent_ids
-            estimate = data.ng.vertices[aid].agent.estimates[end].estimate
+            estimate = data[:ng].vertices[aid].agent.estimates[end].estimate
             final_error_values[(case_index, aid)] = [
                 abs(
                     predict_SCRIBEModel(ground_truth, [x, y]) -
@@ -308,7 +308,7 @@ function communication_comparison_plots(no_comm_run::String,
     error_maps = Any[]
     for (case_index, data) in enumerate(run_data)
         for aid in agent_ids
-            history = reduce(vcat, data.ng.vertices[aid].history)
+            history = reduce(vcat, data[:ng].vertices[aid].history)
             error_plot = heatmap(
                 x_range,
                 x_range,
@@ -316,7 +316,7 @@ function communication_comparison_plots(no_comm_run::String,
                 color=:ice,
                 clims=shared_clims,
                 colorbar=aid == last(agent_ids),
-                title=data.label * " — " * aid,
+                title=data[:label] * " — " * aid,
                 titlefontsize=11,
             )
             plot!(
