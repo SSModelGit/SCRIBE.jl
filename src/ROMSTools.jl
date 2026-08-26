@@ -10,7 +10,7 @@ using ..SCRIBE: EOFClimateModelParameters, calibrate_eof_uncertainty
 using ..SCRIBE: fit_eof_decomposition, initialize_SCRIBEModel_from_parameters
 
 export read_roms_velocity, read_roms_flow_directions, prepare_roms_velocity
-export prepare_roms_component, prepare_roms_curl
+export prepare_roms_component, prepare_roms_curl, prepare_roms_curl_shape
 export fit_roms_eof, field_grid, wet_grid_locations
 export plot_roms_field, plot_roms_curl
 
@@ -140,7 +140,11 @@ function velocity_curl(u, v, longitude, latitude)
     curl
 end
 
-function prepare_roms_curl(path; temporal_stride, spatial_stride=1)
+function prepare_roms_curl(
+    path;
+    temporal_stride,
+    spatial_stride=1,
+)
     u = read_roms_velocity(path, :u)
     v = read_roms_velocity(path, :v)
     sampled_times = collect(1:temporal_stride:size(u[:values], 3))
@@ -164,6 +168,24 @@ function prepare_roms_curl(path; temporal_stride, spatial_stride=1)
         :grid_shape => size(curl)[1:2],
         :wet_mask => selected,
     )
+end
+
+function prepare_roms_curl_shape(
+    path;
+    temporal_stride,
+    spatial_stride=1,
+)
+    roms = prepare_roms_curl(
+        path;
+        temporal_stride,
+        spatial_stride,
+    )
+    magnitude = abs.(roms[:data])
+    scale = vec(mean(magnitude; dims=1))
+    merge(roms, Dict(
+        :data => magnitude ./ reshape(scale, 1, :),
+        :curl_scale => scale,
+    ))
 end
 
 function read_roms_flow_directions(path, roms, snapshots)
@@ -282,17 +304,24 @@ function plot_roms_curl(
     title="curl",
     limit=field_limit(values),
     colorbar=true,
+    magnitude=false,
+    display_scale=1e3,
+    colorbar_title=magnitude ? "|curl| (10⁻³ s⁻¹)" : "curl (10⁻³ s⁻¹)",
 )
-    display_scale = 1e3
-    vorticity = display_scale .* field_grid(values, roms)
+    vorticity = display_scale .* field_grid(
+        magnitude ? abs.(values) : values,
+        roms,
+    )
     flow_u = field_grid(view(flow_directions, :, 1), roms)
     flow_v = field_grid(view(flow_directions, :, 2), roms)
     panel = heatmap(
         vorticity;
-        color=:balance,
-        clims=(-display_scale * limit, display_scale * limit),
+        color=magnitude ? :thermal : :balance,
+        clims=magnitude ?
+            (0.0, display_scale * limit) :
+            (-display_scale * limit, display_scale * limit),
         colorbar,
-        colorbar_title="curl (10⁻³ s⁻¹)",
+        colorbar_title,
         background_color_inside=:gray25,
         aspect_ratio=:equal,
         axis=false,
