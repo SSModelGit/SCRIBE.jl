@@ -67,9 +67,9 @@ end
 
 include("kalman_estimation.jl")
 include("eofclimatemodels.jl")
+include("sommodels.jl")
 include("eof_uncertainty.jl")
 include("ROMSTools.jl")
-export ROMSTools
 include("model_prediction.jl")
 include("model_visualization.jl")
 

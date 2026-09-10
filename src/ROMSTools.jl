@@ -101,43 +101,70 @@ end
 
 """
 Compute vertical vorticity `∂v/∂x - ∂u/∂y` from collocated horizontal
-velocity components on the supplied longitude/latitude grid. `u` and `v` must
+velocity components on the supplied planar x y grid. `u` and `v` must
 follow the eastward and northward grid directions, respectively.
 """
-function velocity_curl(u, v, longitude, latitude)
-    size(u) == size(v) || throw(DimensionMismatch(
-        "ROMS u and v arrays must share a collocated grid",
-    ))
-    x, y = planar_coordinates(longitude, latitude)
-    n_i, n_j, n_t = size(u)
-    curl = fill(NaN, n_i, n_j, n_t)
-    for t in 1:n_t, j in 1:n_j, i in 1:n_i
-        i₀, i₁ = max(i - 1, 1), min(i + 1, n_i)
-        j₀, j₁ = max(j - 1, 1), min(j + 1, n_j)
+function planar_velocity_curl(u, v, x, y)
+    nᵢ, nⱼ, nₜ = size(u)
+    curl = fill(NaN, nᵢ, nⱼ, nₜ)
+    for t in 1:nₜ, j in 1:nⱼ, i in 1:nᵢ
+        i₀, i₁ = max(i - 1, 1), min(i + 1, nᵢ)
+        j₀, j₁ = max(j - 1, 1), min(j + 1, nⱼ)
         stencil = (
             u[i₀, j, t], u[i₁, j, t], u[i, j₀, t], u[i, j₁, t],
             v[i₀, j, t], v[i₁, j, t], v[i, j₀, t], v[i, j₁, t],
             x[i₀, j], x[i₁, j], x[i, j₀], x[i, j₁],
             y[i₀, j], y[i₁, j], y[i, j₀], y[i, j₁],
         )
-        all(isfinite, stencil) || continue
+        if !all(isfinite, stencil); continue; end
+
         Δi = max(i₁ - i₀, 1)
         Δj = max(j₁ - j₀, 1)
+
         dx_di = (x[i₁, j] - x[i₀, j]) / Δi
         dy_di = (y[i₁, j] - y[i₀, j]) / Δi
         dx_dj = (x[i, j₁] - x[i, j₀]) / Δj
         dy_dj = (y[i, j₁] - y[i, j₀]) / Δj
+
         determinant = dx_di * dy_dj - dy_di * dx_dj
-        abs(determinant) > eps(Float64) || continue
+        if !(abs(determinant) > eps(Float64)); continue; end
+
         du_di = (u[i₁, j, t] - u[i₀, j, t]) / Δi
         du_dj = (u[i, j₁, t] - u[i, j₀, t]) / Δj
         dv_di = (v[i₁, j, t] - v[i₀, j, t]) / Δi
         dv_dj = (v[i, j₁, t] - v[i, j₀, t]) / Δj
+
         ∂v_∂x = (dv_di * dy_dj - dy_di * dv_dj) / determinant
         ∂u_∂y = (dx_di * du_dj - du_di * dx_dj) / determinant
         curl[i, j, t] = ∂v_∂x - ∂u_∂y
     end
-    curl
+    return curl
+end
+
+function velocity_curl(
+    u::AbstractArray{<:Real, 3},
+    v::AbstractArray{<:Real, 3},
+    longitude::AbstractMatrix,
+    latitude::AbstractMatrix
+)
+    x, y = planar_coordinates(longitude, latitude)
+    planar_velocity_curl(u, v, x, y)
+end
+
+function velocity_curl(
+    u::AbstractArray,
+    v::AbstractArray,
+    x::AbstractVector,
+    y::AbstractVector
+)
+    x_grid = repeat(reshape(x, :, 1), 1, length(y))
+    y_grid = repeat(reshape(y, 1, :), length(x), 1)
+
+    curl = planar_velocity_curl(
+        reshape(u, size(u)..., 1), reshape(v, size(v)..., 1), 
+        x_grid, y_grid)
+
+    return dropdims(curl, dims=3)
 end
 
 function prepare_roms_curl(
