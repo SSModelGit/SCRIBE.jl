@@ -11,7 +11,7 @@ using ..SCRIBE: fit_eof_decomposition, initialize_SCRIBEModel_from_parameters
 
 export read_roms_velocity, read_roms_flow_directions, prepare_roms_velocity
 export prepare_roms_component, prepare_roms_curl, prepare_roms_curl_shape
-export fit_roms_eof, field_grid, wet_grid_locations
+export fit_roms_eof, field_grid, velocity_curl, wet_grid_locations
 export plot_roms_field, plot_roms_curl
 
 function read_roms_velocity(path, component::Symbol=:u)
