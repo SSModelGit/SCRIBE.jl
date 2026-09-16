@@ -334,6 +334,7 @@ function plot_roms_curl(
     magnitude=false,
     display_scale=1e3,
     colorbar_title=magnitude ? "|curl| (10⁻³ s⁻¹)" : "curl (10⁻³ s⁻¹)",
+    show_arrows=true
 )
     vorticity = display_scale .* field_grid(
         magnitude ? abs.(values) : values,
@@ -356,6 +357,7 @@ function plot_roms_curl(
         ylims=(0.5, size(vorticity, 1) + 0.5),
         title,
     )
+    if !show_arrows; return panel; end
     rows = 2:arrow_stride:size(vorticity, 1)-1
     columns = 2:arrow_stride:size(vorticity, 2)-1
     x = Float64[]
