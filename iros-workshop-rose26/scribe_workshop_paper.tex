@@ -52,7 +52,7 @@ Autonomous exploration uses an uncertain environment model to decide which
 observations are most valuable \cite{hwang2019auv,cui2015mutual}. This is
 particularly important in the deep ocean, where vehicles may localize plumes,
 characterize cold seeps, or follow chemical gradients from sparse data
-\cite{vrolijk2021using}. Teams expand coverage, but acoustic links are
+\cite{vrolijk2021using}. Teams expand coverage, but acoustic networks are
 intermittent, bandwidth-limited, and range-dependent \cite{hwang2019auv}.
 Robots must therefore learn and plan in isolation, then incorporate peer
 knowledge whenever contact resumes.
@@ -72,7 +72,7 @@ knowledge whenever contact resumes.
 
 Distributing environment-model learning is non-trivial: each robot requires a
 locally useful model, yet team models must remain consistent in prediction and
-confidence. Intermittent links cause robots to accumulate different evidence
+confidence. Intermittent connectivity causes robots to accumulate different evidence
 and their learned states to diverge. Existing methods either exchange
 observations and relearn from the
 collective history, whose cost grows with mission duration and sensor dimension
@@ -83,11 +83,10 @@ problem is not communication reduction alone, but guaranteeing an accurate,
 consistently calibrated shared model when only subsets of the team can
 participate in each update.
 
-Distributed GP updates \cite{jang2020multi}, finite-dimensional regression
-\cite{pillonetto2019distributed}, and model-based planning
-\cite{jang2021fully,nguyen2025spatially,kim2023distributed} establish the value
-of collaborative learning. SCRIBE contributes a model-learning and fusion
-mechanism that remains consistent under intermittent communication. A shared
+Work on distributed modeling via GP updates \cite{jang2020multi}, finite-dimensional regression
+\cite{pillonetto2019distributed}, and the use of those shared models
+\cite{jang2021fully,nguyen2025spatially,kim2023distributed} demonstrates promising work in distributing environment models used for exploration, yet does not address the concern of maintaining model consistency, particularly in communication-limited conditions.
+SCRIBE closes this gap by contributing a model-learning and fusion mechanism that remains consistent under intermittent communication. A shared
 GSF or EOF basis first recasts the spatial model as a fixed-dimensional linear
 coefficient state. SCRIBE then interleaves an Information Kalman Filter, whose
 observation updates are additive, with distributed Covariance Intersection,
@@ -101,7 +100,7 @@ loss of consistency, a global graph, or a synchronized team-wide update.
 \begin{figure*}[t]
     \centering
     \includegraphics[
-        width=0.77\textwidth,
+        width=0.8\textwidth,
         trim=0 0 0 0,
         clip
     ]{res/experiment_4/full/distributed_performance.png}
@@ -110,7 +109,7 @@ loss of consistency, a global graph, or a synchronized team-wide update.
     peer. Curves give the mean and one standard deviation. The right panel
     rebuilds a model from all samples chosen by each team and therefore
     compares path quality rather than model fusion. The disagreement axis is
-    truncated; lower is better.}
+    truncated; lower is better. \vspace{-0.5cm}}
     \label{fig:distributed-performance}
 \end{figure*}
 
@@ -208,7 +207,7 @@ component of size $n_c$,
     \label{eq:hybrid-update}
 \end{align}
 CI therefore preserves consistent confidence while MHMC distributes new
-observations. Fusion begins whenever a link appears, without a global graph or
+observations. Fusion begins whenever a connection appears, without a global graph or
 common schedule.
 
 \noindent\textit{Computational scaling.}
@@ -216,8 +215,8 @@ For basis size $b$, messages are $\Theta(b^2)$ and assimilating $q_j$ samples
 is $O(q_jb^2)$. An MHMC round is $O(d_jb^2)$ locally and $O(Eb^2)$ fleet-wide;
 CI is $O(J_{\mathrm{CI}}(d_jb^2+b^3))$. Hence bounded-degree fleets scale as
 $O(Nb^2)$ per round, versus $O(N^2b^2)$ for complete graphs. Fixed-graph
-convergence is $O(\log(e_0/\epsilon)/(1-\rho))$; for changing links, it depends
-on the link process.
+convergence is $O(\log(e_0/\epsilon)/(1-\rho))$; for changing networks, it depends
+on the connection process.
 
 \begin{figure*}[t]
     \begin{minipage}[t]{0.485\textwidth}
@@ -226,7 +225,7 @@ on the link process.
             res/asynchronous_model_fusion/full/asynchronous_model_fusion_poster.png}
         \caption{Asynchronous fusion during continuous sensing. Circles mark
         peer encounters in the selected six-agent mission; the bottom row
-        compares its final model with the ROMS ground truth.}
+        compares its final model with the ROMS ground truth. \vspace{-0.5cm}}
         \label{fig:asynchronous-fusion}
     \end{minipage}
     \hfill
@@ -235,8 +234,8 @@ on the link process.
         \includegraphics[width=0.95\linewidth]{%
             res/agent_number_scaling/full/agent_number_scaling_cost_poster.png}
         \caption{Uncertainty, computation, and communication scaling across
-        team sizes, network densities, and link conditions. Dashed curves
-        denote 50\% link availability.}
+        team sizes, network densities, and connectivity conditions. Dashed curves
+        denote 50\% communication availability. \vspace{-0.5cm}}
         \label{fig:agent-scaling}
     \end{minipage}
 \end{figure*}
@@ -245,11 +244,10 @@ on the link process.
 
 \noindent\textit{Consistency after reconnection.}
 Four agents first follow matched paths, isolating fusion from planning. Across
-30 trials with disjoint links, a middle-third blackout, and reconnection,
+30 trials with disjoint networks, a middle-third blackout, and reconnection,
 SCRIBE reaches RMSE $0.117\pm0.011$, close to centralized sharing
 ($0.101\pm0.012$) and CI ($0.118\pm0.012$), but below IKF without CI
-($0.288\pm0.020$) and no communication ($0.814\pm0.018$). Reconnection
-therefore does not treat correlated priors as independent evidence.
+($0.288\pm0.020$) and no communication ($0.814\pm0.018$).
 Fig.~\ref{fig:field-reconstruction} also shows that EOFs trained on prior Ram
 Head ROMS output \cite{zhang2025fine} retain the dominant held-out structure;
 the two-mode estimate reaches RMSE $0.049$ after 300 samples.
@@ -273,7 +271,7 @@ the fleet grows; connectivity determines the operational cost.
 
 \noindent\textit{Effect on information-guided exploration.}
 Four independent Vulcan planners \cite{ayton2018vulcan} explore for 36 rounds
-with distance-limited links and a twelve-round blackout in
+with distance-limited networks and a twelve-round blackout in
 Fig.~\ref{fig:distributed-performance}. SCRIBE has the lowest final distributed
 error and, like CI, contracts disagreement after reconnection; IKF remains high
 because it does not reconcile correlated priors. SCRIBE's final RMSE
@@ -291,10 +289,8 @@ planning or team-wide communication.
 
 SCRIBE provides consistent, fixed-dimensional fusion through intermittent
 communication. Tests through ten agents approach centralized information
-collection, while $O(b^2)$ messages keep local models usable during blackouts.
-The planner-independent update supports distributed GP and MCTS systems
-\cite{jang2021fully} or Multi-Agent Vulcan \cite{olkin2024multi} across remote
-missions.
+collection, while the integrated Kalman-Filter and Covariance Intersection approach keeps local models both usable during blackouts and from diverging with other agent models after regaining contact.
+The modeling approach effectively supports distributed exploration and planning like seen in \cite{jang2021fully, olkin2024multi}, and leaves integration with these planners as the next step.
 
 \balance
 \bibliographystyle{IEEEtran}
