@@ -3,8 +3,6 @@
 \IEEEoverridecommandlockouts
 \overrideIEEEmargins
 
-\usepackage{algorithm}
-\usepackage{algpseudocode}
 \usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{balance}
@@ -25,27 +23,22 @@ for Communication-Limited Robotic Exploration
 \pagestyle{empty}
 
 \begin{abstract}
-Autonomous exploration of the ocean and other communication-limited
-environments requires agents to construct models from sparse measurements
-while using those models to determine where to sample next. Distributed teams
-can extend the scale and responsiveness of this process, but their ability to
-learn collectively depends on exchanging information across intermittent,
-bandwidth-constrained networks. Observation sharing grows with mission
-duration and sensor dimensionality, while conventional model-state fusion can
-become overconfident when model correlations are unknown. We introduce
-SCRIBE, a fixed-dimensional distributed environment modeling process for
-consistent model assimilation whenever communication is available. SCRIBE
-represents a scalar field through Gaussian basis functions and exploits the
-resulting linear information form to combine Information Kalman filtering,
-Covariance Intersection, and Metropolis--Hastings consensus. Agents can
-thereby exchange learned model states over any available peer link, without
-knowledge of the full communication graph or waiting for scheduled
-model-update windows. We evaluate SCRIBE with independent Vulcan
-information-based planners in twelve simulated four-robot trials under
-distance-limited communication and a complete blackout. The resulting
-trajectories achieve pooled posterior variance within 3.2\% of ideal
-centralized sharing, indicating that consistent model assimilation can
-preserve effective distributed exploration through communication loss.
+SCRIBE addresses distributed environment-model learning under limited
+communication while preserving accurate, mutually consistent estimates of the
+field and its uncertainty. It represents spatial models as fixed-dimensional
+linear states and introduces a fusion process that lets agents repeatedly
+assimilate any available peer's model without full-team participation.
+Information Kalman filtering adds new evidence,
+Covariance Intersection reconciles divergent priors, and
+Metropolis--Hastings consensus propagates innovations using only local neighbor
+information. The resulting model update is lightweight, asynchronous, and
+consistent under intermittent communication. In 96
+missions with 3--10 agents, final
+normalized error is $0.405$--$0.409$, against $0.582$--$1.227$ without
+communication. Across 432 planning trials, median fusion through ten agents
+remains below $6.2$~ms and $24$~kB per update. Independent Vulcan planners
+achieve pooled posterior variance within 3.2\% of ideal centralized sharing,
+demonstrating effective exploration through communication loss.
 \end{abstract}
 
 \begin{keywords}
@@ -55,14 +48,14 @@ intermittent communication, multi-robot systems
 
 \section{Introduction}
 
-Autonomous exploration is both a learning and a decision problem. A robot
-entering an unfamiliar region must gather observations, construct a model of
-the environment, and use that model to determine which future observations
-will be most valuable. Model confidence validates what has been learned and
-identifies where understanding remains incomplete. Gaussian Processes and related
-uncertainty-aware models have consequently found broad use in adaptive
-sampling \cite{hwang2019auv} and information-based path planning
-\cite{cui2015mutual}.
+Autonomous exploration uses an uncertain environment model to decide which
+observations are most valuable \cite{hwang2019auv,cui2015mutual}. This is
+particularly important in the deep ocean, where vehicles may localize plumes,
+characterize cold seeps, or follow chemical gradients from sparse data
+\cite{vrolijk2021using}. Teams expand coverage, but acoustic links are
+intermittent, bandwidth-limited, and range-dependent \cite{hwang2019auv}.
+Robots must therefore learn and plan in isolation, then incorporate peer
+knowledge whenever contact resumes.
 
 \begin{figure}[t]
     \centering
@@ -71,62 +64,62 @@ sampling \cite{hwang2019auv} and information-based path planning
         trim=0 0 0 0,
         clip
     ]{res/experiment_4/full/field_reconstruction.png}
-    \caption{Simulated scalar field over a $10\,\mathrm{km}\times
-    10\,\mathrm{km}$ domain (left) and one robot's final SCRIBE posterior
-    mean (right). Large circles mark initial locations; dash--dot paths
-    terminate in oriented robot symbols. The displayed model is the online
-    posterior at the final sampling round, not a reconstruction formed by
-    replaying the observation history.}
+    \caption{Two SCRIBE models. Top: a simulated field, one robot's final GSF
+    estimate, and four robot paths. Bottom: held-out Ram Head ROMS snapshot
+    5021 and its EOF estimate after 300 samples ($b=2$, RMSE $0.049$).}
     \label{fig:field-reconstruction}
 \end{figure}
 
-The need for this capability is particularly clear in the deep ocean. An
-autonomous underwater vehicle may be asked to localize a hydrothermal plume,
-characterize a cold seep, or follow a chemical gradient using only the sparse
-measurements gathered during its mission; autonomous cold-seep exploration is
-one demonstrated example \cite{vrolijk2021using}. A team can observe a larger
-region and pursue several scientific targets concurrently, but underwater
-acoustic communication is intermittent, bandwidth-limited, and strongly
-dependent on vehicle separation \cite{hwang2019auv}. Each robot must therefore
-continue learning and planning without contact, then incorporate its peers'
-learned model states whenever communication resumes.
+Distributing environment-model learning is non-trivial: each robot requires a
+locally useful model, yet team models must remain consistent in prediction and
+confidence. Intermittent links cause robots to accumulate different evidence
+and their learned states to diverge. Existing methods either exchange
+observations and relearn from the
+collective history, whose cost grows with mission duration and sensor dimension
+\cite{viseras2016decentralized,allamraju2017communication}, or exchange and
+average compact model parameters, which can count correlated information more
+than once and overstate certainty \cite{chen2002estimation}. The fundamental
+problem is not communication reduction alone, but guaranteeing an accurate,
+consistently calibrated shared model when only subsets of the team can
+participate in each update.
 
-Distributed estimates must remain probabilistically consistent. Existing work
-shares gathered or synthetic observations
-\cite{viseras2016decentralized,allamraju2017communication}, or distributes
-Gaussian-process model updates \cite{jang2020multi}. Observation sharing grows
-with the history and becomes especially burdensome for high-dimensional camera,
-sonar, or spectrometer records. Learned states are compact, but states that
-have interacted are correlated; treating them as independent repeatedly counts
-the same observations and overstates certainty
-\cite{chen2002estimation}. That failure directly affects exploration because
-an overconfident model makes an unobserved region appear less informative than
-it is.
+Distributed GP updates \cite{jang2020multi}, finite-dimensional regression
+\cite{pillonetto2019distributed}, and model-based planning
+\cite{jang2021fully,nguyen2025spatially,kim2023distributed} establish the value
+of collaborative learning. SCRIBE contributes a model-learning and fusion
+mechanism that remains consistent under intermittent communication. A shared
+GSF or EOF basis first recasts the spatial model as a fixed-dimensional linear
+coefficient state. SCRIBE then interleaves an Information Kalman Filter, whose
+observation updates are additive, with distributed Covariance Intersection,
+which reconciles divergent priors without their unknown cross-correlations
+\cite{chen2002estimation,wang2012distributed}. Metropolis--Hastings consensus
+propagates the new information using only current neighbor degrees
+\cite{xiao2005scheme}. This hybrid construction \cite{tamjidi2021unifying}
+allows any available agents to repeatedly fuse their learned fields without
+loss of consistency, a global graph, or a synchronized team-wide update.
 
-Finite-dimensional approximations reduce the cost of distributed Gaussian
-regression \cite{pillonetto2019distributed}. Related systems couple distributed
-models to informative planning \cite{jang2021fully,nguyen2025spatially} or
-target search \cite{kim2023distributed}. Together, these results motivate a
-compact model-learning backend whose confidence remains consistent as
-communication changes.
-
-Signal-aware Collaboration for Reliable Information-based Estimation (SCRIBE)
-makes three contributions. First, an Information Kalman Filter (IKF) makes
-observations additive over Gaussian scalar-field (GSF) coefficients. Second,
-Covariance Intersection (CI) reconciles divergent priors without their unknown
-cross-correlations \cite{chen2002estimation,wang2012distributed}. Third,
-Metropolis--Hastings Markov Chain (MHMC) weights distribute new information
-using only the identities and degrees of presently available neighbors
-\cite{xiao2005scheme}. Following the hybrid consensus--CI construction for
-unreliable networks \cite{tamjidi2021unifying}, SCRIBE permits model fusion
-whenever a peer link becomes available, without a full-graph view or a
-scheduled team-wide update.
+\begin{figure*}[t]
+    \centering
+    \includegraphics[
+        width=0.77\textwidth,
+        trim=0 0 0 0,
+        clip
+    ]{res/experiment_4/full/distributed_performance.png}
+    \caption{Twelve four-robot trials of 36 rounds. Shading marks complete
+    blackout; otherwise each robot communicates with at most one in-range
+    peer. Curves give the mean and one standard deviation. The right panel
+    rebuilds a model from all samples chosen by each team and therefore
+    compares path quality rather than model fusion. The disagreement axis is
+    truncated; lower is better.}
+    \label{fig:distributed-performance}
+\end{figure*}
 
 \section{Distributed Environment Modeling}
 
 \subsection{Fixed-Dimensional Information State}
 
-SCRIBE represents a scalar field through $n_\phi$ shared GSF bases
+When no collection of earlier field maps is available, SCRIBE represents a
+scalar field with $n_\phi$ Gaussian scalar-field (GSF) basis functions
 \cite{pillonetto2019distributed,jadaliha2012environmental},
 \begin{align}
     \mathcal{F}(x,k)
@@ -137,53 +130,75 @@ SCRIBE represents a scalar field through $n_\phi$ shared GSF bases
       e^{-\lVert x-\mu_i\rVert_2^2/\sigma_i^2}.
     \label{eq:field-model}
 \end{align}
-Only the coefficient vector $\bm{\phi}$ is estimated online. For
-$\bm{z}_j=\bm{H}_j\bm{\phi}+\bm{v}_j$, agent $j$ maintains information matrix
-$\bm{Y}_j=\bm{P}_j^{-1}$ and vector
-$\bm{y}_j=\bm{Y}_j\hat{\bm{\phi}}_j$. A measurement contributes
+The centers $\mu_i$ and widths $\sigma_i$ place overlapping functions across
+the region; the coefficients $\phi_i(k)$ determine how strongly each function
+appears in the field at time $k$.
+
+When a prior environmental record is available, a mean-centered, spatially
+weighted singular value decomposition instead yields empirical orthogonal
+function (EOF) modes \cite{young2024greedy}. If $\bm E_r$ contains the $r$
+retained modes at the stored feature locations, the field vector is
+\begin{equation}
+    \bm f(k)=\overline{\bm f}+\bm E_r\bm\phi(k),
+    \label{eq:eof-field-model}
+\end{equation}
+where the prior mean $\overline{\bm f}$ and modes remain fixed while
+$\bm\phi(k)$ describes the current field. GSFs suit a poorly known environment,
+while EOFs compress spatial structure present in earlier data.
+
+Online estimation differs only in constructing the observation matrix. GSF
+rows are $\bm\psi^T(x)$ at the sample locations. For EOFs, interpolation
+$\bm L_{\bm X_j}$ maps the stored grid to those locations, giving
+$\bm H_j=\bm L_{\bm X_j}\bm E_r$ and centered data
+$\bm z'_j=\bm z_j-\bm L_{\bm X_j}\overline{\bm f}$. GSF data require no mean
+subtraction. Both satisfy $\bm z'_j=\bm H_j\bm\phi+\bm v_j$. Agent $j$ stores
+$\bm Y_j=\bm P_j^{-1}$ and $\bm y_j=\bm Y_j\hat{\bm\phi}_j$; a measurement adds
 \begin{align}
     \delta\bm{I}_j
     &=\bm{H}_j^T\bm{R}_j^{-1}\bm{H}_j,
     &
     \delta\bm{i}_j
-    &=\bm{H}_j^T\bm{R}_j^{-1}\bm{z}_j.
+    &=\bm{H}_j^T\bm{R}_j^{-1}\bm{z}'_j.
     \label{eq:information-innovation}
 \end{align}
-The exchanged information vector and matrix are fixed by $n_\phi$, independent
-of mission duration; replaying $k$ observations grows as $O(kd_z)$. Raw sensor
-products can be processed locally before entering the shared field model.
-
-\begin{algorithm}[H]
-\caption{Distributed Scalar-Field Modeling at Agent $j$}
-\label{alg:field-modeling}
-\footnotesize
-\begin{algorithmic}[1]
-\Require GSF parameters $\{\mu_i,\sigma_i,\tau_i\}_{i=1}^{n_\phi}$
-\State initialize $(\bm{y}_j,\bm{Y}_j)$ and
-       $\hat{\mathcal{F}}_j(x,0)=\bm{\psi}^T(x)\hat{\bm{\phi}}_j(0)$
-\While{executing the sampling mission}
-    \State $(\bm{z}_j,\bm{X}_j)\gets\operatorname{GatherSamples}()$
-    \State $(\bm{y}_j,\bm{Y}_j)\gets
-           \operatorname{DistributedUpdate}(\bm{\psi},\bm{y}_j,\bm{Y}_j,
-           \bm{z}_j,\bm{X}_j)$
-    \State $\hat{\bm{\phi}}_j\gets\bm{Y}_j^{-1}\bm{y}_j$;
-           $\hat{\mathcal{F}}_j(x)\gets
-           \bm{\psi}^T(x)\hat{\bm{\phi}}_j$
-\EndWhile
-\end{algorithmic}
-\end{algorithm}
+SCRIBE exchanges an $O(n_\phi^2)$ state independent of mission duration,
+rather than an $O(kd_z)$ observation history. From
+$\hat{\bm\phi}_j=\bm Y_j^{-1}\bm y_j$, GSFs predict
+$\bm\psi^T(x)\hat{\bm\phi}_j$; EOFs use
+$\bm L_{\bm X}(\overline{\bm f}+\bm E_r\hat{\bm\phi}_j)$.
 
 \subsection{Fusion under an Unstable Network}
 
-Current innovations are new evidence; priors can contain an unknown amount of
-shared history. SCRIBE deliberately treats them differently. CI chooses
-simplex weights that minimize the covariance of the fused neighbor priors
-without assuming their cross-correlations. In parallel, innovations are
-averaged with
-$\gamma_{jm}=[1+\max(|\mathcal{N}_j|,|\mathcal{N}_m|)]^{-1}$.
-These MHMC weights require only current neighbor degrees, rather than
-knowledge of the global or future graph. After local convergence over a
-reachable component of size $n_c$,
+Agents' priors may contain shared observations, so adding them can count the
+same evidence repeatedly. Let
+$\mathcal N_j^{\ell+}=\mathcal N_j^\ell\cup\{j\}$ and
+$\Delta_j^\ell=\{\bm\omega\geq0:\sum_{m\in\mathcal N_j^{\ell+}}\omega_m=1\}$.
+Distributed CI fuses
+these correlated priors without requiring their cross-correlations:
+\begin{align}
+    \bm\omega^\star
+    &=\underset{\bm\omega\in\Delta_j^\ell}{\arg\min}\;
+      J\!\left[\left(\sum_{m\in\mathcal N_j^{\ell+}}
+      \omega_m\bm Y_m^\ell\right)^{-1}\right],
+    \label{eq:ci-weights}\\
+    (\widetilde{\bm y}_j^{\ell+1},\widetilde{\bm Y}_j^{\ell+1})
+    &=\sum_{m\in\mathcal N_j^{\ell+}}\omega_m^\star
+      (\bm y_m^\ell,\bm Y_m^\ell).
+    \label{eq:ci-update}
+\end{align}
+Current measurement innovations are new evidence and are instead averaged by
+MHMC. For $\delta\bm s_j\in\{\delta\bm i_j,\delta\bm I_j\}$,
+\begin{align}
+    \gamma_{jm}^\ell
+    &=\frac{1}{1+\max(|\mathcal N_j^\ell|,|\mathcal N_m^\ell|)},
+    \label{eq:mhmc-weights}\\
+    \delta\bm s_j^{\ell+1}
+    &=\delta\bm s_j^\ell+\sum_{m\in\mathcal N_j^\ell}
+      \gamma_{jm}^\ell(\delta\bm s_m^\ell-\delta\bm s_j^\ell).
+    \label{eq:mhmc-update}
+\end{align}
+The weights require only current neighbor degrees. After consensus within a
+component of size $n_c$,
 \begin{align}
     \bm{y}_j^{+}
     &=\widetilde{\bm{y}}_j+n_c\overline{\delta\bm{i}}_j,
@@ -192,135 +207,94 @@ reachable component of size $n_c$,
     &=\widetilde{\bm{Y}}_j+n_c\overline{\delta\bm{I}}_j.
     \label{eq:hybrid-update}
 \end{align}
-CI prevents prior agreement from masquerading as a new observation; MHMC
-propagates genuinely new information. This separation permits repeated,
-peer-level fusion whenever links become available, rather than only during
-scheduled team-wide update windows.
-
-\begin{algorithm}[H]
-\caption{SCRIBE Distributed Update at Agent $j$}
-\label{alg:distributed-update}
-\footnotesize
-\begin{algorithmic}[1]
-\Require Model $\bm{\psi}$; state $(\bm{y}_j,\bm{Y}_j)$; sample
-         $(\bm{z}_j,\bm{X}_j)$
-\State $(\bm{y}_j^{-},\bm{Y}_j^{-})\gets
-       \operatorname{LocalPriorUpdate}(\bm{y}_j,\bm{Y}_j)$
-\State $\bm{H}_j\gets\bm{\psi}(\bm{X}_j)$;
-       form $(\delta\bm{i}_j,\delta\bm{I}_j)$ using
-       \eqref{eq:information-innovation}
-\State initialize prior and innovation consensus states
-\While{local fusion has not converged}
-    \State exchange model-state components and degree with neighbors
-    \State fuse neighbor priors using CI
-    \State average neighbor innovations using MHMC
-\EndWhile
-\State \Return $(\widetilde{\bm{y}}_j,\widetilde{\bm{Y}}_j)
-       +n_c(\overline{\delta\bm{i}}_j,\overline{\delta\bm{I}}_j)$
-\end{algorithmic}
-\end{algorithm}
+CI therefore preserves consistent confidence while MHMC distributes new
+observations. Fusion begins whenever a link appears, without a global graph or
+common schedule.
 
 \noindent\textit{Computational scaling.}
-Let $b$ be the GSF basis count or retained EOF rank, $N$ the agents, $E$ the
-active links, and $d_j$ agent $j$'s degree. Each peer message is
-$\Theta(b^2)$. MHMC costs $O(d_jb^2)$ per agent and $O(Eb^2)$ fleet-wide per
-round; dense prediction costs $O(b^3)$, and $J_{\mathrm{CI}}$ CI evaluations
-cost $O(J_{\mathrm{CI}}(d_jb^2+b^3))$ per agent. Thus bounded-degree fleets
-scale linearly with $N$, whereas complete communication has $E=\Theta(N^2)$.
-On a fixed connected graph, disagreement falls from $e_0$ to $\epsilon$ in
-$\lceil\log(e_0/\epsilon)/(-\log\rho)\rceil$ MHMC rounds for mixing factor
-$\rho<1$; under changing connectivity, its expectation depends on the link
-process.
+For basis size $b$, messages are $\Theta(b^2)$ and assimilating $q_j$ samples
+is $O(q_jb^2)$. An MHMC round is $O(d_jb^2)$ locally and $O(Eb^2)$ fleet-wide;
+CI is $O(J_{\mathrm{CI}}(d_jb^2+b^3))$. Hence bounded-degree fleets scale as
+$O(Nb^2)$ per round, versus $O(N^2b^2)$ for complete graphs. Fixed-graph
+convergence is $O(\log(e_0/\epsilon)/(1-\rho))$; for changing links, it depends
+on the link process.
 
 \begin{figure*}[t]
-    \centering
-    \includegraphics[
-        width=0.97\textwidth,
-        trim=0 0 0 0,
-        clip
-    ]{res/experiment_4/full/distributed_performance.png}
-    \caption{Twelve simulated four-robot trials of 36 sampling rounds.
-    Communication is distance- and bandwidth-limited to one in-range peer per
-    robot in rounds 1--12 and 25--36; the shaded interval is a complete
-    blackout. Curves show the mean and one standard deviation. The pooled-data
-    panel isolates trajectory quality from fusion error. The disagreement axis
-    is truncated to resolve the communicating methods; the annotation reports
-    the no-communication peak. Lower values are better.}
-    \label{fig:distributed-performance}
+    \begin{minipage}[t]{0.485\textwidth}
+        \centering
+        \includegraphics[width=0.95\linewidth]{%
+            res/asynchronous_model_fusion/full/asynchronous_model_fusion_poster.png}
+        \caption{Asynchronous fusion during continuous sensing. Circles mark
+        peer encounters in the selected six-agent mission; the bottom row
+        compares its final model with the ROMS ground truth.}
+        \label{fig:asynchronous-fusion}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[t]{0.485\textwidth}
+        \centering
+        \includegraphics[width=0.95\linewidth]{%
+            res/agent_number_scaling/full/agent_number_scaling_cost_poster.png}
+        \caption{Uncertainty, computation, and communication scaling across
+        team sizes, network densities, and link conditions. Dashed curves
+        denote 50\% link availability.}
+        \label{fig:agent-scaling}
+    \end{minipage}
 \end{figure*}
 
-\section{Experimental Evidence}
+\section{Experiments and Results}
 
-We first evaluate SCRIBE independently of planning using four agents on fixed,
-matched sampling paths. A continuous-sharing check reproduces the centralized
-IKF to numerical precision. We then restrict every communication opportunity
-to disjoint, distance-limited peer pairs, remove all links for the middle third
-of the experiment, and restore only the same limited-range communication.
-Across 30 simulated trials with a truth represented by the GSF model, SCRIBE
-reaches final RMSE $0.1170\pm0.0114$, compared with $0.1007\pm0.0121$ for
-centralized sharing, $0.1175\pm0.0115$ for CI alone, $0.2881\pm0.0204$ for the
-IKF without CI, and $0.8136\pm0.0175$ without communication. CI prevents
-priors formed during the blackout from being treated as independent when links
-return, while the IKF innovation update recovers information that CI alone can
-only conservatively intersect.
+\noindent\textit{Consistency after reconnection.}
+Four agents first follow matched paths, isolating fusion from planning. Across
+30 trials with disjoint links, a middle-third blackout, and reconnection,
+SCRIBE reaches RMSE $0.117\pm0.011$, close to centralized sharing
+($0.101\pm0.012$) and CI ($0.118\pm0.012$), but below IKF without CI
+($0.288\pm0.020$) and no communication ($0.814\pm0.018$). Reconnection
+therefore does not treat correlated priors as independent evidence.
+Fig.~\ref{fig:field-reconstruction} also shows that EOFs trained on prior Ram
+Head ROMS output \cite{zhang2025fine} retain the dominant held-out structure;
+the two-mode estimate reaches RMSE $0.049$ after 300 samples.
 
-To demonstrate SCRIBE's effectiveness for exploration, four robots sample a
-simulated field for 36 rounds under the same limited communication and blackout
-schedule. Five comparisons isolate the sharing mechanism. IKF-only sums new
-innovations without reconciling correlated priors; CI-only intersects local
-posteriors without summing independent innovations; limited-observation
-sharing sends the two newest unseen records over each available link. No
-communication retains only local data, while centralized sharing supplies
-every observation as an ideal bound. Every distributed method obeys the same
-range limit: the largest component contains two robots, and the middle twelve
-rounds contain no links.
+\noindent\textit{Fusion without scheduled communication.}
+Agents then sense continuously for 8178 steps in adjacent regions and exchange
+models only at proximity encounters. Every team size in
+Fig.~\ref{fig:asynchronous-fusion} converges near centralized NRMSE
+($0.404$--$0.409$), versus $0.582$--$1.227$ without communication. The
+six-agent trajectories converge from distinct initial errors; residual spatial
+smoothing is the two-mode representation floor, not an asynchronous-fusion
+failure.
 
-We use Vulcan \cite{ayton2018vulcan} in a single-agent implementation for
-simplicity. Each robot plans from its own current model, without joint
-allocation or collaborative tree search. This deliberately isolates the
-information reward supplied by SCRIBE to otherwise decoupled planners.
-Figure~\ref{fig:field-reconstruction} shows the online reconstruction and
-sampling paths. In Fig.~\ref{fig:distributed-performance}, SCRIBE's final
-per-agent RMSE is $0.523\pm0.060$, compared with $0.458\pm0.052$ centrally,
-$0.564\pm0.084$ for CI alone, $0.730\pm0.081$ for IKF alone,
-$0.653\pm0.067$ for limited-observation sharing, and $1.041\pm0.053$ without
-communication.
+\noindent\textit{Operational scaling.}
+Across 432 trials with 2--10 agents, Fig.~\ref{fig:agent-scaling} separates
+estimation quality from fusion cost. Posterior variance remains stable, while
+network mixing governs consensus rounds, time, and payload. The worst case,
+the intermittent moderate-degree graph at ten agents, requires about 26
+rounds, $6.2$~ms, and $24$~kB per update. Model quality therefore persists as
+the fleet grows; connectivity determines the operational cost.
 
-To evaluate exploration separately from fusion error, we pool the samples
-selected under each regime and construct one common evaluation model.
-Differences then arise from where the decoupled planners chose to sample, not
-from how their online models fused information. The pooled RMSE is $0.455$ for
-SCRIBE, $0.458$ centrally, and $0.594$ without communication. Integrated
-posterior variance, the information reward used during planning, is $0.0488$
-for SCRIBE, within 3.2\% of the centralized $0.0473$; CI alone reaches
-$0.0528$, IKF alone $0.0617$, limited-observation sharing $0.0651$, and no
-communication $0.1074$. SCRIBE therefore selects nearly as informative a set
-of measurements as ideal sharing, even though no distributed planner ever has
-access to a team-wide communication component.
+\noindent\textit{Effect on information-guided exploration.}
+Four independent Vulcan planners \cite{ayton2018vulcan} explore for 36 rounds
+with distance-limited links and a twelve-round blackout in
+Fig.~\ref{fig:distributed-performance}. SCRIBE has the lowest final distributed
+error and, like CI, contracts disagreement after reconnection; IKF remains high
+because it does not reconcile correlated priors. SCRIBE's final RMSE
+($0.523\pm0.060$) approaches centralized sharing ($0.458\pm0.052$), improves
+on CI ($0.564\pm0.084$), and halves the no-communication error
+($1.041\pm0.053$).
 
-SCRIBE communicates a learned state whose dimension is determined by $b$,
-rather than by mission duration or raw-sensor dimension. Although the
-simulated records are scalar, high-dimensional sonar, camera, or spectrometer
-products can be processed locally before entering the learned field model.
-Direct observation sharing must retain and transmit those records, a
-distinction that grows throughout the mission.
+Pooling each regime's samples isolates path quality. SCRIBE nearly matches
+centralized pooled RMSE ($0.455$ versus $0.458$) and integrated variance
+($0.0488$ versus $0.0473$), the latter within 3.2\%. Consistent fusion thus
+recovers almost all information gathered under ideal sharing, without joint
+planning or team-wide communication.
 
 \section{Conclusion}
 
-SCRIBE provides a compact and probabilistically consistent environment model
-for distributed exploration under limited communication. Fixed-path results
-show that its hybrid update preserves consistency through disconnection and
-reconnection; planning results show nearly centralized information collection
-without a team-wide connected network. The communicated state remains
-$O(b^2)$, bounded-degree fleet work scales linearly with the number of agents,
-and local models remain usable throughout a blackout.
-
-Because its update is independent of the planning architecture, SCRIBE can
-serve fully distributed GP and MCTS systems \cite{jang2021fully} and
-coordinated planners such as Multi-Agent Vulcan \cite{olkin2024multi}. The
-same requirements arise in ocean, planetary, subterranean, and other remote
-missions where neither teammates nor human operators are continuously
-reachable.
+SCRIBE provides consistent, fixed-dimensional fusion through intermittent
+communication. Tests through ten agents approach centralized information
+collection, while $O(b^2)$ messages keep local models usable during blackouts.
+The planner-independent update supports distributed GP and MCTS systems
+\cite{jang2021fully} or Multi-Agent Vulcan \cite{olkin2024multi} across remote
+missions.
 
 \balance
 \bibliographystyle{IEEEtran}

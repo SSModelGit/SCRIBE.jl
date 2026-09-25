@@ -2,6 +2,7 @@ ENV["GKSwstype"] = "100"
 
 include(joinpath(@__DIR__, "informative_exploration_problem.jl"))
 include(joinpath(@__DIR__, "filtering_experiments.jl"))
+include(joinpath(@__DIR__, "ram_head_eof_experiment.jl"))
 
 using Plots
 using Statistics
@@ -1149,28 +1150,53 @@ function trajectory_reconstruction_panel(result, aid, frame_index)
     plot_object
 end
 
-function save_field_reconstruction_figure(results, settings, output_dir)
+function save_field_reconstruction_figure(
+    results,
+    settings,
+    output_dir,
+    eof_result=nothing,
+)
     scribe = results[:scribe]
     agent_ids = sort(collect(keys(scribe.histories)))
     aid = agent_ids[settings[:representative_agent_index]]
     final_frame = settings[:n_samples] + 1
-    figure = plot(
+    gaussian_panels = (
         truth_panel(scribe),
-        trajectory_reconstruction_panel(
-            scribe,
-            aid,
-            final_frame,
-        );
-        layout=(1, 2),
-        size=(1080, 500),
+        trajectory_reconstruction_panel(scribe, aid, final_frame),
+    )
+    panels = isnothing(eof_result) ? gaussian_panels : let
+        limit = maximum(abs, eof_result[:truth])
+        (
+            gaussian_panels...,
+            ram_head_panel(
+                eof_result[:truth],
+                eof_result,
+                "Ram Head ROMS Ground Truth",
+                limit,
+            ),
+            ram_head_panel(
+                eof_result[:posterior],
+                eof_result,
+                "EOF Posterior after $(eof_result[:n_samples]) Samples",
+                limit,
+                show_sampling_path=false,
+            ),
+        )
+    end
+    figure = plot(
+        panels...;
+        layout=isnothing(eof_result) ?
+            (1, 2) :
+            grid(2, 2; heights=[0.58, 0.42]),
+        size=isnothing(eof_result) ? (1080, 500) : (1080, 760),
         left_margin=4 * Plots.mm,
         right_margin=2 * Plots.mm,
-        top_margin=2 * Plots.mm,
-        bottom_margin=3 * Plots.mm,
-        titlefontsize=15,
-        guidefontsize=13,
-        tickfontsize=11,
-        legendfontsize=9,
+        top_margin=1 * Plots.mm,
+        bottom_margin=2 * Plots.mm,
+        titlefontsize=13,
+        guidefontsize=11,
+        tickfontsize=9,
+        legendfontsize=8,
     )
     output_path = joinpath(output_dir, "field_reconstruction.png")
     savefig(figure, output_path)
@@ -1250,8 +1276,8 @@ function save_distributed_performance_figure(rows, settings, output_dir)
     figure = plot(
         panels...,
         legend_panel;
-        layout=@layout([grid(1, 3); legend{0.18h}]),
-        size=(1560, 540),
+        layout=@layout([grid(1, 3); legend{0.15h}]),
+        size=(1500, 500),
         margin=2 * Plots.mm,
         titlefontsize=17,
         guidefontsize=14,
@@ -1492,7 +1518,13 @@ function distributed_exploration_main(
         joinpath(output_dir, "final_summary.csv"),
     )
     save_distributed_exploration_figure(rows, settings, output_dir)
-    save_field_reconstruction_figure(representative, settings, output_dir)
+    eof_result = profile == :full ? run_ram_head_eof_experiment() : nothing
+    save_field_reconstruction_figure(
+        representative,
+        settings,
+        output_dir,
+        eof_result,
+    )
     save_distributed_performance_figure(rows, settings, output_dir)
     save_representative_figure(representative, settings, output_dir)
     animations &&
