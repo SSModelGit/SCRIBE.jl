@@ -1,11 +1,16 @@
-using JuMP
-using Ipopt
-
 export reset_consensus_count, full_reset_network_connector, progress_agent_env_filter
 export network_precheck, network_postcheck, network_prior_update, network_averaging_update
-export distributed_fusion
+export distributed_fusion, consume_consensus_message!, deliver_consensus_messages
 
-reset_consensus_count(nc::NetworkConnector) = nc.outbox["lv"] = 0
+const CONSENSUS_STABLE_ROUNDS = 3
+
+symmetrize(M::AbstractMatrix) = Matrix(Symmetric((M + M') / 2))
+
+function reset_consensus_count(nc::NetworkConnector)
+    nc.outbox["lv"] = 0
+    nc.outbox["cvc"] = 0
+    nc.outbox["stage_ready"] = false
+end
 
 function full_reset_network_connector(nc::NetworkConnector)
     nc.outbox["lc"] = nothing
@@ -14,130 +19,434 @@ function full_reset_network_connector(nc::NetworkConnector)
     nc.outbox["cvc"] = 0
     nc.outbox["prior"] = nothing
     nc.outbox["innov"] = nothing
+    nc.outbox["stage"] = :prior
+    nc.outbox["seq"] = 0
+    nc.outbox["cache"] = Dict{String, Any}()
+    nc.outbox["msg_out"] = nothing
+    nc.outbox["complete"] = false
+    nc.outbox["n_eff"] = 1
+    nc.outbox["stage_ready"] = false
 end
 
-function network_precheck(k::Integer, estimators::EnvEstimators, net_conn::NetworkConnector)
-    if isnothing(net_conn.outbox["prior"])
+current_neighbors(agent_id::String, ng::NetworkGraph) =
+    get(ng.edges, agent_id, String[])
+
+function component_agents(agent_id::String, ng::NetworkGraph)
+    visited = Set{String}()
+    stack = String[agent_id]
+    while !isempty(stack)
+        aid = pop!(stack)
+        aid in visited && continue
+        push!(visited, aid)
+        append!(stack, (nb for nb in current_neighbors(aid, ng) if nb ∉ visited))
+    end
+    sort!(collect(visited))
+end
+
+function queue_consensus_message!(agent_id::String, k::Integer,
+                                  nc::NetworkConnector, ng::NetworkGraph)
+    if isnothing(nc.outbox["lc"])
+        nc.outbox["msg_out"] = nothing
+        return
+    end
+    nc.outbox["seq"] += 1
+    nc.outbox["msg_out"] = ConsensusMessage(
+        agent_id,
+        k,
+        nc.outbox["stage"],
+        nc.outbox["lv"],
+        nc.outbox["seq"],
+        length(current_neighbors(agent_id, ng)),
+        copy.(nc.outbox["lc"]),
+    )
+end
+
+"""Accept a consensus message only from a current neighbor and for the exact round."""
+function consume_consensus_message!(receiver_id::String, nc::NetworkConnector,
+                                    msg::ConsensusMessage, k::Integer,
+                                    ng::NetworkGraph)
+    if msg.sender ∉ current_neighbors(receiver_id, ng) ||
+       msg.k != k ||
+       msg.stage != nc.outbox["stage"] ||
+       msg.lv != nc.outbox["lv"]
+        return false
+    end
+
+    cache = nc.outbox["cache"]
+    prev = get(cache, msg.sender, nothing)
+    if isnothing(prev) || msg.seq > prev.seq
+        cache[msg.sender] = msg
+        return true
+    end
+    return false
+end
+
+"""Compatibility overload. Prefer the graph-aware method above."""
+function consume_consensus_message!(nc::NetworkConnector, msg::ConsensusMessage,
+                                    k::Integer)
+    if msg.sender ∉ nc.neighbors ||
+       msg.k != k ||
+       msg.stage != nc.outbox["stage"] ||
+       msg.lv != nc.outbox["lv"]
+        return false
+    end
+    cache = nc.outbox["cache"]
+    prev = get(cache, msg.sender, nothing)
+    if isnothing(prev) || msg.seq > prev.seq
+        cache[msg.sender] = msg
+        return true
+    end
+    return false
+end
+
+function deliver_consensus_messages(k::Integer, ng::NetworkGraph)
+    outgoing = Dict{String, ConsensusMessage}()
+    for (aid, agent) in ng.vertices
+        msg = agent.net_conn.outbox["msg_out"]
+        if !isnothing(msg) && msg.k == k
+            outgoing[aid] = msg
+        end
+    end
+    outgoing
+end
+
+function network_precheck(k::Integer, estimators::EnvEstimators,
+                          net_conn::NetworkConnector)
+    stage = net_conn.outbox["stage"]
+    if stage == :prior
         net_conn.outbox["lc"] = compute_info_priors(estimators, k)
-    elseif isnothing(net_conn.outbox["innov"])
+    elseif stage == :innov
         net_conn.outbox["lc"] = compute_innov_from_obs(estimators, k)
+    else
+        error("Unknown consensus stage $stage")
     end
     net_conn.outbox["ln"] = nothing
     net_conn.outbox["lv"] = 1
     net_conn.outbox["cvc"] = 0
+    net_conn.outbox["stage_ready"] = false
+    empty!(net_conn.outbox["cache"])
 end
 
-function network_postcheck(nc::NetworkConnector, threshold::Float64; agent_id=nothing)
-    let cvc = nc.outbox["cvc"]
-        shifts = map(i->norm(abs.(nc.outbox["lc"][i] - nc.outbox["ln"][i])), [1,2])
-        nc.outbox["cvc"] = (all(shifts .< threshold) ? cvc+1 : 0)
-        if !isnothing(agent_id)
-            println(agent_id*"LC: ", nc.outbox["lc"])
-            println(agent_id*"LN: ", nc.outbox["ln"])
-            println(agent_id*"LV: ", nc.outbox["lv"], " | CVC: ", nc.outbox["cvc"])
-        end
-        nc.outbox["lc"] = (copy(nc.outbox["ln"][1]), copy(nc.outbox["ln"][2]))
-        nc.outbox["ln"] = nothing
-        nc.outbox["lv"] += 1
+function relative_shift(a, b)
+    norm(a - b) / max(norm(a), norm(b), 1.0)
+end
 
-        return nc.outbox["cvc"]
-        # return nc.outbox["cvc"] > length(ng.vertices)
+function network_postcheck(nc::NetworkConnector, threshold::Float64;
+                           agent_id=nothing)
+    shifts = map(i -> relative_shift(nc.outbox["lc"][i],
+                                     nc.outbox["ln"][i]), (1, 2))
+    nc.outbox["cvc"] = all(shifts .≤ threshold) ?
+                       nc.outbox["cvc"] + 1 : 0
+    nc.outbox["stage_ready"] =
+        nc.outbox["cvc"] ≥ CONSENSUS_STABLE_ROUNDS
+
+    if !isnothing(agent_id)
+        println(agent_id, " relative consensus shifts: ", shifts,
+                " | round: ", nc.outbox["lv"],
+                " | stable rounds: ", nc.outbox["cvc"])
     end
+
+    nc.outbox["lc"] = copy.(nc.outbox["ln"])
+    nc.outbox["ln"] = nothing
+    nc.outbox["lv"] += 1
+    nc.outbox["cvc"]
 end
 
-function network_prior_update(nc::NetworkConnector, ng::NetworkGraph)
-    (cYᵢ, cyᵢ) = copy.(nc.outbox["lc"])
-    cYyⱼ = Dict([(nb, copy.(ng.vertices[nb].net_conn.outbox["lc"])) for nb in nc.neighbors])
-
-    sY = [cYᵢ, [Y[1] for Y in values(cYyⱼ)]...]
-    sYinv = [inv(Y) for Y in sY]
-    sy = [cyᵢ, [Y[2] for Y in values(cYyⱼ)]...]
-    Nᵢ = size(sY, 1)
-
-    model = Model(Ipopt.Optimizer); set_silent(model);
-    @variable(model, ω[1:Nᵢ]>=0.0)
-    @constraint(model, sum(ω)==1.0)
-    @objective(model, Min, tr(sum(ω[i] * sYinv[i] for i in 1:Nᵢ)))
-    optimize!(model)
-    ω_best = value.(ω)
-
-    # Complete network prior update
-    nc.outbox["ln"] = (sum(ω_best .* sY), sum(ω_best .* sy))
+function valid_neighbor_payloads(agent_id::String, nc::NetworkConnector,
+                                 ng::NetworkGraph)
+    cache = nc.outbox["cache"]
+    Dict(
+        nb => copy.(cache[nb].payload)
+        for nb in current_neighbors(agent_id, ng)
+        if haskey(cache, nb) &&
+           cache[nb].lv == nc.outbox["lv"] &&
+           cache[nb].stage == nc.outbox["stage"]
+    )
 end
 
-function network_averaging_update(nc::NetworkConnector, ng::NetworkGraph)
-    xᵢ = copy.(nc.outbox["lc"])
-    xⱼ = Dict([(nb, copy.(ng.vertices[nb].net_conn.outbox["lc"])) for nb in nc.neighbors])
-
-    # acquire differential updates from neighbors
-    deg = size(nc.neighbors, 1)
-    nb_degs = Dict([(nb, size(ng.edges[nb], 1)) for nb in nc.neighbors])
-    γᵢ = Dict([(nb, 1/(1 + max(deg, nb_degs[nb]))) for nb in nc.neighbors])
-    scaled_diffs = Dict([(nb, γᵢ[nb] .* (xⱼ[nb] .- xᵢ)) for nb in nc.neighbors])
-
-    # Complete network averaging
-    δI = xᵢ[1] + sum(map(x->x[1], values(scaled_diffs)))
-    δi = xᵢ[2] + sum(map(x->x[2], values(scaled_diffs)))
-    nc.outbox["ln"] = (δI, δi)
+function neighbor_messages_ready(agent_id::String, nc::NetworkConnector,
+                                 ng::NetworkGraph)
+    cache = nc.outbox["cache"]
+    all(
+        haskey(cache, nb) &&
+        cache[nb].lv == nc.outbox["lv"] &&
+        cache[nb].stage == nc.outbox["stage"]
+        for nb in current_neighbors(agent_id, ng)
+    )
 end
 
-"""Perform one round of distributed fusion.
+function project_simplex(v::Vector{Float64})
+    u = sort(v; rev=true)
+    cssv = cumsum(u) .- 1.0
+    ρ = findlast(i -> u[i] - cssv[i] / i > 0.0, eachindex(u))
+    isnothing(ρ) && return fill(1.0 / length(v), length(v))
+    θ = cssv[ρ] / ρ
+    max.(v .- θ, 0.0)
+end
 
-Return true if complete. Otherwise, return false.
+function trace_covariance_and_gradient(weights::Vector{Float64},
+                                       information_matrices::Vector{Matrix{Float64}})
+    Ȳ = symmetrize(sum(weights[i] * information_matrices[i]
+                       for i in eachindex(weights)))
+    factor = cholesky(Symmetric(Ȳ); check=true)
+    P̄ = Matrix(factor \ Matrix{Float64}(I, size(Ȳ)...))
+    objective = tr(P̄)
+    gradient = [
+        -tr(P̄ * information_matrices[i] * P̄)
+        for i in eachindex(weights)
+    ]
+    objective, gradient
+end
 
-Note that convergence on priors is not completion.
-"""
-function distributed_fusion(k::Integer, agent_id::String, ng::NetworkGraph, threshold::Float64, timeline::Integer)
-    @unpack estimators, net_conn = ng.vertices[agent_id]
+"""Solve the thesis trace-covariance CI subproblem on the probability simplex."""
+function covariance_intersection_weights(
+    information_matrices::Vector{Matrix{Float64}};
+    tolerance::Float64=1e-10,
+    max_iterations::Integer=200,
+)
+    n = length(information_matrices)
+    n == 1 && return [1.0]
+    weights = fill(1.0 / n, n)
+    objective, gradient =
+        trace_covariance_and_gradient(weights, information_matrices)
 
-    # Compute priors from current system state at t=k and previous information state at t=k-1
-    nₐ=length(ng.vertices)
+    for _ in 1:max_iterations
+        step = 1.0 / max(norm(gradient), 1.0)
+        accepted = false
+        candidate = weights
+        candidate_objective = objective
 
-    if net_conn.outbox["lv"] == 0
-        network_precheck(k, estimators, net_conn)
-        return false
-    else
-        if isnothing(net_conn.outbox["prior"])
-            network_prior_update(net_conn, ng)
-            # TODO: come up with better convergence conditions
-            cvc = network_postcheck(net_conn, threshold) # network_postcheck(net_conn, threshold; agent_id) # debugging mode
-            if net_conn.outbox["lv"] > timeline
-                net_conn.outbox["prior"] = copy.(net_conn.outbox["lc"])
-                reset_consensus_count(net_conn)
+        for _ in 1:30
+            candidate = project_simplex(weights .- step .* gradient)
+            direction = candidate - weights
+            if norm(direction) ≤ tolerance
+                return candidate
             end
-            return false
-        elseif isnothing(net_conn.outbox["innov"])
-            network_averaging_update(net_conn, ng)
-            # TODO: come up with better convergence conditions
-            cvc = network_postcheck(net_conn, threshold) # network_postcheck(net_conn, threshold; agent_id) # debugging mode
-            if net_conn.outbox["lv"] > timeline
-                # Compute innovations for t=k+1 from current observation at t=k
-                net_conn.outbox["innov"] = (copy(net_conn.outbox["lc"][1]), copy(net_conn.outbox["lc"][2]))
-                info_state_update_post_consensus(agent_id, ng)
-                return true
-            else
-                return false
+            candidate_objective, _ =
+                trace_covariance_and_gradient(candidate,
+                                              information_matrices)
+            if candidate_objective ≤
+               objective + 1e-4 * dot(gradient, direction)
+                accepted = true
+                break
             end
-        else
-            @error "clear out the outbox properly..."
+            step *= 0.5
         end
+
+        accepted || return weights
+        if norm(candidate - weights) ≤ tolerance ||
+           abs(candidate_objective - objective) ≤
+           tolerance * max(abs(objective), 1.0)
+            return candidate
+        end
+
+        weights = candidate
+        objective, gradient =
+            trace_covariance_and_gradient(weights, information_matrices)
+    end
+    weights
+end
+
+function network_prior_update(agent_id::String, nc::NetworkConnector,
+                              ng::NetworkGraph)
+    cYᵢ, cyᵢ = copy.(nc.outbox["lc"])
+    neighbor_values = valid_neighbor_payloads(agent_id, nc, ng)
+    neighbor_ids = sort(collect(keys(neighbor_values)))
+
+    information_matrices =
+        Matrix{Float64}[symmetrize(cYᵢ),
+                        (symmetrize(neighbor_values[id][1])
+                         for id in neighbor_ids)...]
+    information_vectors =
+        Vector{Float64}[cyᵢ,
+                        (neighbor_values[id][2]
+                         for id in neighbor_ids)...]
+    weights = covariance_intersection_weights(information_matrices)
+
+    Y_next = symmetrize(sum(weights[i] * information_matrices[i]
+                            for i in eachindex(weights)))
+    y_next = sum(weights[i] * information_vectors[i]
+                 for i in eachindex(weights))
+    cholesky(Symmetric(Y_next); check=true)
+    nc.outbox["ln"] = (Y_next, y_next)
+end
+
+function network_averaging_update(agent_id::String, nc::NetworkConnector,
+                                  ng::NetworkGraph)
+    xᵢ = copy.(nc.outbox["lc"])
+    neighbors = valid_neighbor_payloads(agent_id, nc, ng)
+    degree = length(current_neighbors(agent_id, ng))
+
+    δI = copy(xᵢ[1])
+    δi = copy(xᵢ[2])
+    for (nb, xⱼ) in neighbors
+        γᵢⱼ = 1.0 /
+              (1.0 + max(degree,
+                         length(current_neighbors(nb, ng))))
+        δI .+= γᵢⱼ .* (xⱼ[1] .- xᵢ[1])
+        δi .+= γᵢⱼ .* (xⱼ[2] .- xᵢ[2])
+    end
+    nc.outbox["ln"] = (symmetrize(δI), δi)
+end
+
+function component_spread(component::Vector{String}, ng::NetworkGraph)
+    max_spread = 0.0
+    for i in eachindex(component), j in (i + 1):length(component)
+        left = ng.vertices[component[i]].net_conn.outbox["lc"]
+        right = ng.vertices[component[j]].net_conn.outbox["lc"]
+        if isnothing(left) || isnothing(right)
+            return Inf
+        end
+        max_spread = max(max_spread,
+                         relative_shift(left[1], right[1]),
+                         relative_shift(left[2], right[2]))
+    end
+    max_spread
+end
+
+function component_ready(component::Vector{String}, stage::Symbol,
+                         ng::NetworkGraph, threshold::Float64)
+    all(
+        let outbox = ng.vertices[aid].net_conn.outbox
+            outbox["stage"] == stage && outbox["stage_ready"]
+        end
+        for aid in component
+    ) && component_spread(component, ng) ≤ threshold
+end
+
+function begin_innovation_stage!(component::Vector{String}, ng::NetworkGraph)
+    for aid in component
+        outbox = ng.vertices[aid].net_conn.outbox
+        outbox["prior"] = copy.(outbox["lc"])
+        reset_consensus_count(ng.vertices[aid].net_conn)
+        outbox["stage"] = :innov
+        empty!(outbox["cache"])
+        outbox["lc"] = nothing
+        outbox["ln"] = nothing
+        outbox["msg_out"] = nothing
     end
 end
 
 function info_state_update_post_consensus(agent_id::String, ng::NetworkGraph)
     @unpack agent, net_conn = ng.vertices[agent_id]
     @unpack outbox = net_conn
-    let δĪ=outbox["innov"][1], δī=outbox["innov"][2], Y⁻=outbox["prior"][1], y⁻=outbox["prior"][2], nₐ = ng.connectivity[agent_id]
-        next_agent_info_state(agent, KFEnvInfo(y⁻+nₐ*δī, Y⁻+nₐ*δĪ, δī, δĪ)) # set info(t=k+1)
+    δĪ, δī = outbox["innov"]
+    Y⁻, y⁻ = outbox["prior"]
+    nₐ = length(component_agents(agent_id, ng))
+    outbox["n_eff"] = nₐ
+    Y_next = symmetrize(Y⁻ + nₐ * δĪ)
+    y_next = y⁻ + nₐ * δī
+    cholesky(Symmetric(Y_next); check=true)
+    next_agent_info_state(
+        agent,
+        KFEnvInfo(y_next, Y_next, δī, δĪ),
+    )
+end
+
+function complete_innovation_stage!(component::Vector{String},
+                                    ng::NetworkGraph)
+    for aid in component
+        outbox = ng.vertices[aid].net_conn.outbox
+        outbox["innov"] = copy.(outbox["lc"])
+    end
+    for aid in component
+        info_state_update_post_consensus(aid, ng)
+        outbox = ng.vertices[aid].net_conn.outbox
+        outbox["complete"] = true
+        outbox["msg_out"] = nothing
     end
 end
 
-"""Consolidated update process. Assumes information state is updated during distributed fusion.
+"""Perform one round of SCRIBE prior-CI or innovation-average consensus.
 
-Requires the new state of the world and the new sampling locations.
+Completion requires three stable local rounds and agreement across the entire
+current connected component. `timeline` is a hard safety limit, not a substitute
+for convergence.
 """
-function progress_agent_env_filter(agent::KFEnvScribe, world::SCRIBEModel, X::Matrix{Float64})
-    ϕₖ=recover_estimate_from_info(agent, agent.k+1) # acquire ϕⱼ(t=k+1)
-    next_agent_state(agent, ϕₖ, world, X) # set ϕⱼ(t=k+1); acquire and set z(t=k+1)
-    next_agent_time(agent) # k ⟵ k+1
+function distributed_fusion(k::Integer, agent_id::String, ng::NetworkGraph,
+                            threshold::Float64, timeline::Integer)
+    @unpack estimators, net_conn = ng.vertices[agent_id]
+    outbox = net_conn.outbox
+
+    outbox["complete"] && return true
+
+    if outbox["lv"] == 0
+        network_precheck(k, estimators, net_conn)
+        queue_consensus_message!(agent_id, k, net_conn, ng)
+        return false
+    end
+
+    stage = outbox["stage"]
+    if !neighbor_messages_ready(agent_id, net_conn, ng)
+        # Do not advance the local round using a partial neighborhood. Re-send
+        # the current value so a delayed neighbor can still synchronize.
+        queue_consensus_message!(agent_id, k, net_conn, ng)
+        return false
+    end
+    if stage == :prior
+        network_prior_update(agent_id, net_conn, ng)
+    elseif stage == :innov
+        network_averaging_update(agent_id, net_conn, ng)
+    else
+        error("Unknown consensus stage $stage")
+    end
+    network_postcheck(net_conn, threshold)
+
+    component = component_agents(agent_id, ng)
+    if component_ready(component, stage, ng, threshold)
+        if stage == :prior
+            begin_innovation_stage!(component, ng)
+            return false
+        else
+            complete_innovation_stage!(component, ng)
+            return true
+        end
+    end
+    if outbox["lv"] > timeline
+        spread = component_spread(component, ng)
+        error("Connected component $(join(component, ", ")) failed to converge " *
+              "in stage $stage within $timeline rounds (relative spread=$spread).")
+    end
+
+    queue_consensus_message!(agent_id, k, net_conn, ng)
+    false
+end
+
+"""Advance the environment filter after distributed fusion has set information at `k+1`."""
+function progress_agent_env_filter(agent::KFEnvScribe, world::SCRIBEModel,
+                                   X::Matrix{Float64})
+    ϕₖ = recover_estimate_from_info(agent, agent.k + 1)
+    next_agent_state(agent, ϕₖ, world, X)
+    next_agent_time(agent)
+end
+
+"""Advance a distributed data-backed filter and pull its next observation."""
+function progress_agent_env_filter(
+    agent::KFEnvScribe,
+    X::Matrix{Float64},
+)
+    agent.bhv isa DataObserver ||
+        throw(ArgumentError(
+            "Location-only progression requires a DataObserver.",
+        ))
+    ϕₖ = recover_estimate_from_info(agent, agent.k + 1)
+    next_agent_state(agent, ϕₖ, X)
+    next_agent_time(agent)
+end
+
+"""Advance a distributed filter with a pre-collected sensor measurement."""
+function progress_agent_env_filter(
+    agent::KFEnvScribe,
+    measurement::SensorObservation,
+)
+    expected_time =
+        get_model_time(agent.estimates[agent.k].estimate) + 1
+    measurement.k == expected_time ||
+        throw(ArgumentError(
+            "Expected a time-$expected_time observation; received time " *
+            "$(measurement.k).",
+        ))
+    ϕₖ = recover_estimate_from_info(agent, agent.k + 1)
+    next_agent_state(agent, ϕₖ, measurement)
+    next_agent_time(agent)
 end

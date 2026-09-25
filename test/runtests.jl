@@ -1,8 +1,5 @@
 using SCRIBE
 using Test
 
-# using GaussianProcesses: GPE # this is ONLY for testing
-
-@testset "SCRIBE.jl" begin
-    include("test_kalman.jl")
-end
+include("eof_uncertainty.jl")
+include("roms_tools.jl")

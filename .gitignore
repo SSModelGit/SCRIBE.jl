@@ -2,3 +2,10 @@
 .vscode/settings.json
 *.jld2
 *.png
+*feedback*
+*.log
+poetry.lock
+.python-version
+pyproject.toml
+*thesis*.pdf
+bigdata/

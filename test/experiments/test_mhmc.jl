@@ -2,10 +2,10 @@ using Test
 using SCRIBE
 
 using Match: @match
-using LinearAlgebra: I, norm
+using LinearAlgebra: I, Symmetric, cholesky, norm
+using Statistics: mean
 
-using JLD2: @save, @load
-using Plots: heatmap, plot, plot!, savefig
+using JLD2: @save
 
 """Rapid-fire (potentially homogeneous multi-agent) setup.
 
@@ -107,7 +107,20 @@ function mul_agent_perf_conn(run_name::String, nₐ=3, nₛ=100; testing=true, t
     for i in 1:nₛ
         print("k: ", i)
         while true
-            if all(map(aid->distributed_fusion(i, aid, ng, 0.1, 360), agent_ids))
+            done = map(aid->distributed_fusion(i, aid, ng, 1e-8, 360), agent_ids)
+            deliveries = deliver_consensus_messages(i, ng)
+            for (aid, msg) in deliveries
+                for nb in ng.edges[aid]
+                    if nb != aid && haskey(ng.vertices, nb)
+                        consume_consensus_message!(nb, ng.vertices[nb].net_conn,
+                                                   msg, i, ng)
+                    end
+                end
+            end
+            for aid in keys(deliveries)
+                ng.vertices[aid].net_conn.outbox["msg_out"] = nothing
+            end
+            if all(done)
                 print(" ...convergence reached:: ")
                 break
             end
@@ -126,6 +139,7 @@ function mul_agent_perf_conn(run_name::String, nₐ=3, nₛ=100; testing=true, t
 
     simple_print_results(gt_model, ng)
 
+    mkpath("test/res_data")
     @save "test/res_data/"*run_name*".jld2" gt_model ng
     return gt_model, ng
 end
@@ -135,7 +149,9 @@ function distance_based_conn(ng, agent_ids, conn_dist, i)
     for ag1 in agent_ids
         new_conns[ag1] = []
         for ag2 in agent_ids
-            if norm(ng.vertices[ag1].agent.estimates[i].observations.X[end, :] - ng.vertices[ag2].agent.estimates[i].observations.X[end, :]) < conn_dist
+            if ag1 != ag2 &&
+               norm(ng.vertices[ag1].agent.estimates[i].observations.X[end, :] -
+                    ng.vertices[ag2].agent.estimates[i].observations.X[end, :]) < conn_dist
                 push!(new_conns[ag1], ag2)
             end
         end
@@ -184,7 +200,20 @@ function mul_agent_poor_conn(run_name::String, nₐ=3, nₛ=100; testing=true, t
 
         print("k: ", i)
         while true
-            if all(map(aid->distributed_fusion(i, aid, ng, 0.1, 360), agent_ids))
+            done = map(aid->distributed_fusion(i, aid, ng, 1e-8, 360), agent_ids)
+            deliveries = deliver_consensus_messages(i, ng)
+            for (aid, msg) in deliveries
+                for nb in ng.edges[aid]
+                    if nb != aid && haskey(ng.vertices, nb)
+                        consume_consensus_message!(nb, ng.vertices[nb].net_conn,
+                                                   msg, i, ng)
+                    end
+                end
+            end
+            for aid in keys(deliveries)
+                ng.vertices[aid].net_conn.outbox["msg_out"] = nothing
+            end
+            if all(done)
                 print(" ...convergence reached:: ")
                 break
             end
@@ -203,6 +232,7 @@ function mul_agent_poor_conn(run_name::String, nₐ=3, nₛ=100; testing=true, t
 
     simple_print_results(gt_model, ng)
 
+    mkpath("test/res_data")
     @save "test/res_data/"*run_name*".jld2" gt_model ng
     return gt_model, ng
 end
@@ -211,7 +241,13 @@ function simple_print_results(gt_model::Vector{T} where T<:SCRIBEModel, ng::Netw
     agent_ids = collect(keys(ng.vertices))
 
     fests_m = [(aid*"m", ng.vertices[aid].agent.estimates[end].estimate.ϕ) for aid in agent_ids] # Final Mean Estimates
-    fests_v = [(aid*"v", inv(ng.vertices[aid].agent.information[end].Y)) for aid in agent_ids] # Final Variance Estimates
+    fests_v = [
+        let Y = ng.vertices[aid].agent.information[end].Y
+            (aid*"v", Matrix(cholesky(Symmetric((Y + Y') / 2)) \
+                              Matrix{Float64}(I, size(Y)...)))
+        end
+        for aid in agent_ids
+    ] # Final covariance estimates
     fvals = Dict([(:k, ng.vertices["agent1"].agent.k), (:ϕ, gt_model[end].ϕ), fests_m..., fests_v...]) # collate
 
     println("Results:")
@@ -221,107 +257,10 @@ function simple_print_results(gt_model::Vector{T} where T<:SCRIBEModel, ng::Netw
     end
 end
 
-function frechet_dist_eval_plot(run_name::String; layout_size=(800,500))
-    png_name = "test/res_plots/"*run_name*"_frechet_dist.png"
-
-    @load "test/res_data/"*run_name*".jld2" gt_model ng
-
-    x_range = -5:0.1:5
-    y_range = copy(x_range)
-    err_sq(gt, am, v) = norm(predict_SCRIBEModel(gt, v) - predict_SCRIBEModel(am, v))^2
-    frechet(gt, am) = sum([err_sq(gt, am, [x, y]) for x in x_range for y in y_range])
-    agent_ids = collect(keys(ng.edges))
-    frechet_dists = Dict([(aid, [frechet(gt_model[i], ng.vertices[aid].agent.estimates[i].estimate) for i in 1:length(gt_model)]) for aid in agent_ids])
-
-    p1 = plot(size=layout_size, xlabel="Time (in discretized steps)", ylabel="(pseudo-)Frechet distance",
-    title="Performance of agent learned environment models \ncompared to ground truth over time", margin=(10, :mm))
-    for aid in agent_ids
-        plot!(p1, 1:length(gt_model), frechet_dists[aid], label="Agent "*aid[end], lw=2)
+"""Load the shared plotting helpers only when an experiment needs them."""
+function load_plotting_helpers()
+    if !isdefined(@__MODULE__, :error_map_plots)
+        include(joinpath(@__DIR__, "plot_results.jl"))
     end
-
-    p2 = plot(size=layout_size, xlabel="Time (in discretized steps)",
-              title="Close-up of performance of agent learned environment models \nafter gathering initial observations", margin=(10, :mm))
-    for aid in agent_ids
-        plot!(p2, (1:length(gt_model))[3:end], frechet_dists[aid][3:end], label="Agent "*aid[end], lw=2)
-        println(aid*" FDists: ", frechet_dists[aid])
-    end
-
-    plot(p1, p2, layout=(1,2), size=(layout_size[1]*2, layout_size[2]))
-    savefig(png_name);
-    println("Plot saved at "*png_name)
+    nothing
 end
-
-function error_mapf(gt::SCRIBEModel, m::SCRIBEModel, x::Vector; mode=:norm)
-    @match mode begin
-        :norm => norm(predict_SCRIBEModel(gt, x) - predict_SCRIBEModel(m, x))
-        :tane => abs(2*atan(predict_SCRIBEModel(gt, x) / predict_SCRIBEModel(m, x)) - π/2)/(π/2)
-    end
-end
-
-function error_map_plots(run_name::String; layout_size=(2700,1500), mode=:tane)
-    png_name = "test/res_plots/"*run_name*"_err_map.png"
-
-    @load "test/res_data/"*run_name*".jld2" gt_model ng
-    gt = gt_model[end]
-
-    num_plots = length(ng.vertices)
-    needs_padding = num_plots%2==1
-    # layout_num = (2,Integer(ceil(num_plots/2)))
-    layout_num = (num_plots, num_plots+1)
-    pred_cgrad = :thermal
-    gt_err_cgrad = :solar
-    rel_err_cgrad = :ice
-
-    x_range = -5:0.1:5
-    y_range = copy(x_range)
-    gt_map = heatmap(x_range, y_range, [predict_SCRIBEModel(gt, [x,y]) for y in y_range, x in x_range],
-                     color=:viridis, # xlabel="X", ylabel="Y",
-                     title="Ground truth distribution",
-                     c = pred_cgrad)
-
-    error_maps = Dict{String, Vector}()
-    error_mapv = Any[gt_map]
-
-    for (i, aid) in enumerate(keys(ng.vertices))
-        error_maps[aid] = Any[]
-        if i≠1
-            println("Blank because ground truth is already added, for "*aid[end])
-            push!(error_maps[aid], plot(legend=false,grid=false,foreground_color_subplot=:white))
-        end
-        for (j, a2d) in enumerate(keys(ng.vertices))
-            let m1 = ng.vertices[aid].agent.estimates[end].estimate,
-                m2 = ng.vertices[a2d].agent.estimates[end].estimate,
-                h1=reduce(vcat, ng.vertices[aid].history),
-                h2=reduce(vcat, ng.vertices[a2d].history)
-
-                if i==j
-                    println("Ground comparison for agent "*aid[end])
-                    push!(error_maps[aid], heatmap(x_range, y_range, [error_mapf(gt, m1, [x,y]; mode=mode) for y in y_range, x in x_range],
-                                                   color=:viridis, # xlabel="X", ylabel="Y",
-                                                   title="% error between \nAgent "*aid[end]*"'s predictions and ground truth",
-                                                   c = gt_err_cgrad))
-                    plot!(error_maps[aid][end], copy(h1[:,1]), copy(h1[:,2]),
-                          linestyle=:dash, marker=:xcross, linecolor=:red, label="Agent "*aid[end]*" sampling sites")
-                else
-                    println("Comparison for agent "*aid[end]*" with agent "*a2d[end])
-                    push!(error_maps[aid], heatmap(x_range, y_range, [error_mapf(m1, m2, [x,y]; mode=mode) for y in y_range, x in x_range],
-                                                   color=:viridis, # xlabel="X", ylabel="Y",
-                                                   title="% error between \nAgent "*aid[end]*" and Agent "*a2d[end]*" predictions",
-                                                   c = rel_err_cgrad))
-                    # plot!(error_maps[aid][end], copy(h1[:,1]), copy(h1[:,2]),
-                    #       linestyle=:dash, marker=:xcross, linecolor=:red, label="Agent "*aid[end]*" sampling sites")
-                    # plot!(error_maps[aid][end], copy(h2[:,1]), copy(h2[:,2]),
-                    #       linestyle=:dash, marker=:xcross, linecolor=:red, label="Agent "*a2d[end]*" sampling sites")
-                end
-            end
-        end
-        append!(error_mapv, copy(error_maps[aid]))
-    end
-
-    # if needs_padding; push!(error_mapv, nothing); end
-    plot(error_mapv..., layout=layout_num, size=layout_size)
-    savefig(png_name);
-    println("Plot saved at "*png_name)
-end
-
-# mul_agent_distrib_KF();
