@@ -249,35 +249,35 @@ function compute_run_metrics(gt_model, ng, space_corners; grid_step=0.25)
         errors = predictions[aid] .- ground_truth
         Y = ng.vertices[aid].agent.information[end].Y
         Y_symmetric = Symmetric((Y + Y') / 2)
-        per_agent[aid] = (
-            mae=mean(abs.(errors)),
-            rmse=sqrt(mean(errors.^2)),
-            information_min_eigenvalue=eigmin(Y_symmetric),
-            information_condition_number=cond(Matrix(Y_symmetric)),
+        per_agent[aid] = Dict(
+            :mae => mean(abs.(errors)),
+            :rmse => sqrt(mean(errors.^2)),
+            :information_min_eigenvalue => eigmin(Y_symmetric),
+            :information_condition_number => cond(Matrix(Y_symmetric)),
         )
     end
 
-    (
-        parameter_consensus_error=parameter_consensus_error,
-        prediction_consensus_rmse=prediction_consensus_rmse,
-        per_agent=per_agent,
+    Dict(
+        :parameter_consensus_error => parameter_consensus_error,
+        :prediction_consensus_rmse => prediction_consensus_rmse,
+        :per_agent => per_agent,
     )
 end
 
 function print_run_metrics(metrics)
     println("Consensus diagnostics:")
     println("  relative parameter consensus error: ",
-            metrics.parameter_consensus_error)
+            metrics[:parameter_consensus_error])
     println("  prediction consensus RMSE: ",
-            metrics.prediction_consensus_rmse)
+            metrics[:prediction_consensus_rmse])
     println("Model and information diagnostics:")
-    for aid in sort(collect(keys(metrics.per_agent)))
-        values = metrics.per_agent[aid]
+    for aid in sort(collect(keys(metrics[:per_agent])))
+        values = metrics[:per_agent][aid]
         println("  ", aid,
-                " | MAE=", values.mae,
-                " | RMSE=", values.rmse,
-                " | λmin(Y)=", values.information_min_eigenvalue,
-                " | cond(Y)=", values.information_condition_number)
+                " | MAE=", values[:mae],
+                " | RMSE=", values[:rmse],
+                " | λmin(Y)=", values[:information_min_eigenvalue],
+                " | cond(Y)=", values[:information_condition_number])
     end
 end
 
@@ -428,5 +428,5 @@ function run_communication_comparison(; n_steps::Integer=10,
         GC.gc()
     end
 
-    (runs=run_names, plots=plot_paths)
+    Dict(:runs => run_names, :plots => plot_paths)
 end

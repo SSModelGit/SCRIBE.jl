@@ -200,3 +200,32 @@ function scribe_observations(X::Matrix{Float64}, smodel::LGSFModel, o_b::LGSFObs
         LGSFObserverState(smodel.k, nₛ, X, H, v, z)
     end
 end
+
+"""Scribe externally supplied scalar-field data against an LGSF model."""
+function scribe_observations(
+    measurement::SensorObservation,
+    smodel::LGSFModel,
+    behavior::LGSFObserverBehavior,
+)
+    measurement.k == smodel.k ||
+        throw(ArgumentError(
+            "Observation time $(measurement.k) does not match model time " *
+            "$(smodel.k).",
+        ))
+    nₛ = length(measurement.z)
+    R = isnothing(measurement.R) ?
+        behavior.v_s[:σ] .* Matrix{Float64}(I, nₛ, nₛ) :
+        measurement.R
+    H, X = compute_obs_dynamics(smodel, measurement.X)
+    LGSFObserverState(
+        measurement.k,
+        nₛ,
+        X,
+        H,
+        Dict{Symbol, AbstractArray{Float64}}(
+            :R => Matrix(R),
+            :k => zeros(nₛ),
+        ),
+        copy(measurement.z),
+    )
+end

@@ -3,7 +3,7 @@ module SCRIBE
 using Reexport
 using LinearAlgebra
 using GaussianDistributions: ⊕, Gaussian
-using Parameters: @unpack
+using Parameters: @unpack, @with_kw_noshow
 
 include("SCRIBEModels.jl")
 @reexport using .SCRIBEModels
@@ -66,6 +66,10 @@ struct SCRIBEAgent
 end
 
 include("kalman_estimation.jl")
+include("eofclimatemodels.jl")
+include("sommodels.jl")
+include("eof_uncertainty.jl")
+include("ROMSTools.jl")
 include("model_prediction.jl")
 include("model_visualization.jl")
 

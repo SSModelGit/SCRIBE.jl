@@ -50,6 +50,26 @@ function SCRIBEVisualizationGrid(
     state::SCRIBEModelState;
     n_points=51,
 )
+    if state.smodel isa EOFClimateModel
+        locations = state.smodel.params.locations
+        size(locations, 2) >= 2 ||
+            throw(ArgumentError(
+                "One-dimensional EOF models require an explicit " *
+                "SCRIBEVisualizationGrid.",
+            ))
+        x = collect(range(
+            minimum(locations[:, 1]),
+            maximum(locations[:, 1]);
+            length=n_points,
+        ))
+        y = collect(range(
+            minimum(locations[:, 2]),
+            maximum(locations[:, 2]);
+            length=n_points,
+        ))
+        return SCRIBEVisualizationGrid(x, y)
+    end
+
     let centers=state.smodel.params.p[:μ],
         x=collect(range(
             minimum(centers[:, 1]),
@@ -96,23 +116,23 @@ visualization_noise_variance(R::AbstractMatrix) = mean(diag(R))
 function posterior_statistics(prediction, variance, ground_truth, R)
     let uncertainty=sqrt.(max.(variance, 0.0)),
         noise_variance=visualization_noise_variance(R),
-        uncertainty_statistics=(
-            uncertainty=uncertainty,
-            mean_uncertainty=mean(uncertainty),
-            maximum_uncertainty=maximum(uncertainty),
-            integrated_uncertainty=mean(variance),
+        uncertainty_statistics=Dict(
+            :uncertainty => uncertainty,
+            :mean_uncertainty => mean(uncertainty),
+            :maximum_uncertainty => maximum(uncertainty),
+            :integrated_uncertainty => mean(variance),
         )
         isnothing(ground_truth) ?
             merge(
-                (
-                    prediction=prediction,
-                    variance=variance,
-                    absolute_error=nothing,
-                    rmse=missing,
-                    normalized_rmse=missing,
-                    mae=missing,
-                    predictive_log_likelihood=missing,
-                    interval_coverage=missing,
+                Dict(
+                    :prediction => prediction,
+                    :variance => variance,
+                    :absolute_error => nothing,
+                    :rmse => missing,
+                    :normalized_rmse => missing,
+                    :mae => missing,
+                    :predictive_log_likelihood => missing,
+                    :interval_coverage => missing,
                 ),
                 uncertainty_statistics,
             ) :
@@ -120,20 +140,20 @@ function posterior_statistics(prediction, variance, ground_truth, R)
                 rmse=sqrt(mean(abs2, error)),
                 predictive_variance=variance .+ noise_variance
                 merge(
-                    (
-                        prediction=prediction,
-                        variance=variance,
-                        absolute_error=abs.(error),
-                        rmse=rmse,
-                        normalized_rmse=rmse / std(ground_truth),
-                        mae=mean(abs, error),
-                        predictive_log_likelihood=mean(
+                    Dict(
+                        :prediction => prediction,
+                        :variance => variance,
+                        :absolute_error => abs.(error),
+                        :rmse => rmse,
+                        :normalized_rmse => rmse / std(ground_truth),
+                        :mae => mean(abs, error),
+                        :predictive_log_likelihood => mean(
                             -0.5 .* (
                                 log.(2π .* predictive_variance) .+
                                 abs2.(error) ./ predictive_variance
                             ),
                         ),
-                        interval_coverage=mean(
+                        :interval_coverage => mean(
                             abs.(error) .≤ 1.96 .* uncertainty,
                         ),
                     ),
@@ -149,22 +169,22 @@ function visualization_summary(state, grid, ground_truth)
             state.information,
             grid.locations,
         ),
-        variance=max.(diag(moments.Σ), 0.0),
+        variance=max.(diag(moments[:Σ]), 0.0),
         statistics=posterior_statistics(
-            moments.μ,
+            moments[:μ],
             variance,
             ground_truth,
             state.R,
         ),
         coefficient_mean=posterior_coefficient_moments(
             state.information,
-        ).μ
+        )[:μ]
         merge(
             statistics,
-            (
-                coefficient_magnitude=norm(coefficient_mean) /
+            Dict(
+                :coefficient_magnitude => norm(coefficient_mean) /
                     sqrt(length(coefficient_mean)),
-                mean_entropy=evaluate_information_metric(
+                :mean_entropy => evaluate_information_metric(
                     state.information;
                     metric=:differential_entropy,
                 ) / length(coefficient_mean),
@@ -183,13 +203,13 @@ function visualization_frame(
     realized_information=0.0,
     variance_reduction=0.0,
 )
-    (
-        n_samples=n_samples,
-        observation=observation,
-        expected_information=expected_information,
-        realized_information=realized_information,
-        integrated_variance_reduction=variance_reduction,
-        summary=visualization_summary(state, grid, ground_truth),
+    Dict(
+        :n_samples => n_samples,
+        :observation => observation,
+        :expected_information => expected_information,
+        :realized_information => realized_information,
+        :integrated_variance_reduction => variance_reduction,
+        :summary => visualization_summary(state, grid, ground_truth),
     )
 end
 
@@ -203,6 +223,18 @@ end
 
 function realized_observation(
     observation::LGSFObserverState,
+    _,
+    _,
+)
+    SCRIBEObservation(
+        observation.X,
+        observation.z,
+        observation.v[:R],
+    )
+end
+
+function realized_observation(
+    observation::EOFObserverState,
     _,
     _,
 )
@@ -264,14 +296,14 @@ function condition_visualization_state(
             realized_information,
             variance_reduction,
         )
-        (state=posterior, frame=frame)
+        Dict(:state => posterior, :frame => frame)
     end
 end
 
 """Build visualization history from observations and an initial model.
 
-`SCRIBEObservation` and `LGSFObserverState` entries carry their own filtering
-locations. Raw measurement values use the corresponding entry in
+`SCRIBEObservation`, `LGSFObserverState`, and `EOFObserverState` entries carry
+their own filtering locations. Raw measurement values use the corresponding entry in
 `sampling_locations`. Sampling locations are only drawn as a path when they
 are explicitly supplied.
 """
@@ -308,9 +340,9 @@ function scribe_model_history(
                 truth,
                 index,
             )
-            prior=update.state
-            push!(states, update.state)
-            push!(frames, update.frame)
+            prior=update[:state]
+            push!(states, update[:state])
+            push!(frames, update[:frame])
         end
         SCRIBEVisualizationHistory(
             states,
@@ -539,33 +571,33 @@ function posterior_surface_panel(
 end
 
 function visualization_limits(history)
-    let summaries=getproperty.(history.frames, :summary),
-        predictions=reduce(vcat, getproperty.(summaries, :prediction)),
+    let summaries=getindex.(history.frames, :summary),
+        predictions=reduce(vcat, getindex.(summaries, :prediction)),
         reference=isnothing(history.ground_truth) ?
             predictions :
             history.ground_truth,
         field_extent=maximum(abs, [reference; predictions]),
         uncertainty_extent=maximum(
-            getproperty.(summaries, :maximum_uncertainty),
+            getindex.(summaries, :maximum_uncertainty),
         ),
         error_extent=isnothing(history.ground_truth) ?
             1.0 :
             maximum(
-                maximum(summary.absolute_error) for summary in summaries
+                maximum(summary[:absolute_error]) for summary in summaries
             )
-        (
-            field=(-field_extent, field_extent),
-            uncertainty=(0.0, uncertainty_extent),
-            error=(0.0, error_extent),
+        Dict(
+            :field => (-field_extent, field_extent),
+            :uncertainty => (0.0, uncertainty_extent),
+            :error => (0.0, error_extent),
         )
     end
 end
 
 function posterior_mean_title(frame)
-    ismissing(frame.summary.rmse) ?
-        "Posterior mean — $(frame.n_samples) samples" :
-        "Posterior mean — $(frame.n_samples) samples\n" *
-            "RMSE $(round(frame.summary.rmse; digits=3))"
+    ismissing(frame[:summary][:rmse]) ?
+        "Posterior mean — $(frame[:n_samples]) samples" :
+        "Posterior mean — $(frame[:n_samples]) samples\n" *
+            "RMSE $(round(frame[:summary][:rmse]; digits=3))"
 end
 
 function plot_posterior_mean_map(
@@ -576,10 +608,10 @@ function plot_posterior_mean_map(
     let frame=history[frame_index],
         plot_object=posterior_surface_panel(
             history.grid,
-            frame.summary.prediction,
+            frame[:summary][:prediction],
             posterior_mean_title(frame);
             color=:balance,
-            color_limits=limits.field,
+            color_limits=limits[:field],
         )
         overlay_sampling_path!(
             plot_object,
@@ -608,11 +640,11 @@ function plot_posterior_uncertainty_map(
     let frame=history[frame_index],
         plot_object=posterior_surface_panel(
             history.grid,
-            frame.summary.uncertainty,
-            "Posterior uncertainty — $(frame.n_samples) samples\n" *
-                "mean σ $(round(frame.summary.mean_uncertainty; digits=3))";
+            frame[:summary][:uncertainty],
+            "Posterior uncertainty — $(frame[:n_samples]) samples\n" *
+                "mean σ $(round(frame[:summary][:mean_uncertainty]; digits=3))";
             color=:viridis,
-            color_limits=limits.uncertainty,
+            color_limits=limits[:uncertainty],
         )
         overlay_sampling_path!(
             plot_object,
@@ -641,11 +673,11 @@ function plot_absolute_error_map(
     let frame=history[frame_index],
         plot_object=posterior_surface_panel(
             history.grid,
-            frame.summary.absolute_error,
-            "Absolute error — $(frame.n_samples) samples\n" *
-                "MAE $(round(frame.summary.mae; digits=3))";
+            frame[:summary][:absolute_error],
+            "Absolute error — $(frame[:n_samples]) samples\n" *
+                "MAE $(round(frame[:summary][:mae]; digits=3))";
             color=:thermal,
-            color_limits=limits.error,
+            color_limits=limits[:error],
         )
         overlay_sampling_path!(
             plot_object,
@@ -676,7 +708,7 @@ function plot_posterior_against_ground_truth(
             history.ground_truth,
             "Ground truth";
             color=:balance,
-            color_limits=limits.field,
+            color_limits=limits[:field],
         ),
         posterior_plot=plot_posterior_mean_map(
             history;
@@ -737,7 +769,7 @@ function plot_posterior_summary(
                     history.ground_truth,
                     "Ground truth";
                     color=:balance,
-                    color_limits=limits.field,
+                    color_limits=limits[:field],
                 ),
                 error_plot=plot_absolute_error_map(
                     history;
@@ -753,9 +785,9 @@ function plot_posterior_summary(
                     size=(900, 720),
                     margin=0.5 * Plots.mm,
                     plot_titlefontsize=11,
-                    plot_title="Samples: $(frame.n_samples)   " *
+                    plot_title="Samples: $(frame[:n_samples])   " *
                         "Expected IVR: $(round(
-                            frame.integrated_variance_reduction;
+                            frame[:integrated_variance_reduction];
                             digits=3,
                         ))",
                 )
@@ -780,11 +812,11 @@ function plot_metric_history(
     frame_index=lastindex(history),
 )
     let frames=history.frames[1:frame_index],
-        samples=getproperty.(frames, :n_samples),
-        summaries=getproperty.(frames, :summary),
-        mean_uncertainty=getproperty.(summaries, :mean_uncertainty),
-        maximum_uncertainty=getproperty.(summaries, :maximum_uncertainty),
-        mean_entropy=getproperty.(summaries, :mean_entropy),
+        samples=getindex.(frames, :n_samples),
+        summaries=getindex.(frames, :summary),
+        mean_uncertainty=getindex.(summaries, :mean_uncertainty),
+        maximum_uncertainty=getindex.(summaries, :maximum_uncertainty),
+        mean_entropy=getindex.(summaries, :mean_entropy),
         entropy_reduction=first(mean_entropy) .- mean_entropy,
         uncertainty_plot=plot(
             samples,
@@ -804,7 +836,7 @@ function plot_metric_history(
 
         information_plot=plot(
             samples,
-            getproperty.(frames, :expected_information);
+            getindex.(frames, :expected_information);
             label="expected MI",
             marker=:circle,
             ylabel="information (nats)",
@@ -813,14 +845,14 @@ function plot_metric_history(
         plot!(
             information_plot,
             samples,
-            getproperty.(frames, :realized_information);
+            getindex.(frames, :realized_information);
             label="realized KL",
             marker=:circle,
         )
 
         reward_plot=plot(
             samples,
-            getproperty.(frames, :integrated_variance_reduction);
+            getindex.(frames, :integrated_variance_reduction);
             label="integrated variance reduction",
             marker=:circle,
             ylabel="mean variance reduction",
@@ -829,7 +861,7 @@ function plot_metric_history(
 
         model_plot=plot(
             samples,
-            getproperty.(summaries, :coefficient_magnitude);
+            getindex.(summaries, :coefficient_magnitude);
             label="RMS posterior coefficient",
             marker=:circle,
             ylabel="model state",
@@ -857,7 +889,7 @@ function plot_metric_history(
         else
             let error_plot=plot(
                     samples,
-                    getproperty.(summaries, :rmse);
+                    getindex.(summaries, :rmse);
                     label="RMSE",
                     marker=:circle,
                     ylabel="field error",
@@ -866,7 +898,7 @@ function plot_metric_history(
                 plot!(
                     error_plot,
                     samples,
-                    getproperty.(summaries, :mae);
+                    getindex.(summaries, :mae);
                     label="MAE",
                     marker=:circle,
                 )
@@ -919,11 +951,11 @@ function plot_predictions_against_ground_truth(
             scatter!(
                 plot_object,
                 truth,
-                frame.summary.prediction;
+                frame[:summary][:prediction];
                 markersize=2,
                 markerstrokewidth=0,
                 alpha=0.45,
-                label="$(frame.n_samples) samples",
+                label="$(frame[:n_samples]) samples",
             )
         end
         plot!(
@@ -1110,66 +1142,66 @@ end
 
 function static_visualization(history, metric)
     @match metric begin
-        :posterior_mean => (
-            plot=plot_posterior_mean_map(history),
-            filename="posterior_mean.png",
+        :posterior_mean => Dict(
+            :plot => plot_posterior_mean_map(history),
+            :filename => "posterior_mean.png",
         )
-        :posterior_uncertainty => (
-            plot=plot_posterior_uncertainty_map(history),
-            filename="posterior_uncertainty.png",
+        :posterior_uncertainty => Dict(
+            :plot => plot_posterior_uncertainty_map(history),
+            :filename => "posterior_uncertainty.png",
         )
-        :posterior_against_ground_truth => (
-            plot=plot_posterior_against_ground_truth(history),
-            filename="posterior_against_ground_truth.png",
+        :posterior_against_ground_truth => Dict(
+            :plot => plot_posterior_against_ground_truth(history),
+            :filename => "posterior_against_ground_truth.png",
         )
-        :absolute_error => (
-            plot=plot_absolute_error_map(history),
-            filename="absolute_error.png",
+        :absolute_error => Dict(
+            :plot => plot_absolute_error_map(history),
+            :filename => "absolute_error.png",
         )
-        :metric_history => (
-            plot=plot_metric_history(history),
-            filename="metric_history.png",
+        :metric_history => Dict(
+            :plot => plot_metric_history(history),
+            :filename => "metric_history.png",
         )
-        :predictions_against_ground_truth => (
-            plot=plot_predictions_against_ground_truth(history),
-            filename="predictions_against_ground_truth.png",
+        :predictions_against_ground_truth => Dict(
+            :plot => plot_predictions_against_ground_truth(history),
+            :filename => "predictions_against_ground_truth.png",
         )
-        :posterior_summary => (
-            plot=plot_posterior_summary(history),
-            filename="posterior_summary.png",
+        :posterior_summary => Dict(
+            :plot => plot_posterior_summary(history),
+            :filename => "posterior_summary.png",
         )
     end
 end
 
 function animated_visualization(history, metric)
     @match metric begin
-        :posterior_mean => (
-            animation=animate_posterior_mean_map(history),
-            filename="posterior_mean.gif",
+        :posterior_mean => Dict(
+            :animation => animate_posterior_mean_map(history),
+            :filename => "posterior_mean.gif",
         )
-        :posterior_uncertainty => (
-            animation=animate_posterior_uncertainty_map(history),
-            filename="posterior_uncertainty.gif",
+        :posterior_uncertainty => Dict(
+            :animation => animate_posterior_uncertainty_map(history),
+            :filename => "posterior_uncertainty.gif",
         )
-        :posterior_against_ground_truth => (
-            animation=animate_posterior_against_ground_truth(history),
-            filename="posterior_against_ground_truth.gif",
+        :posterior_against_ground_truth => Dict(
+            :animation => animate_posterior_against_ground_truth(history),
+            :filename => "posterior_against_ground_truth.gif",
         )
-        :absolute_error => (
-            animation=animate_absolute_error_map(history),
-            filename="absolute_error.gif",
+        :absolute_error => Dict(
+            :animation => animate_absolute_error_map(history),
+            :filename => "absolute_error.gif",
         )
-        :metric_history => (
-            animation=animate_metric_history(history),
-            filename="metric_history.gif",
+        :metric_history => Dict(
+            :animation => animate_metric_history(history),
+            :filename => "metric_history.gif",
         )
-        :predictions_against_ground_truth => (
-            animation=animate_predictions_against_ground_truth(history),
-            filename="predictions_against_ground_truth.gif",
+        :predictions_against_ground_truth => Dict(
+            :animation => animate_predictions_against_ground_truth(history),
+            :filename => "predictions_against_ground_truth.gif",
         )
-        :posterior_summary => (
-            animation=animate_posterior_summary(history),
-            filename="posterior_summary.gif",
+        :posterior_summary => Dict(
+            :animation => animate_posterior_summary(history),
+            :filename => "posterior_summary.gif",
         )
     end
 end
@@ -1197,9 +1229,9 @@ function save_static_visualizations(
         let visualization=static_visualization(history, metric),
             output_path=joinpath(
                 output_dir,
-                visualization.filename,
+                visualization[:filename],
             )
-            savefig(visualization.plot, output_path)
+            savefig(visualization[:plot], output_path)
             output_path
         end
     end
@@ -1229,9 +1261,9 @@ function save_animated_visualizations(
         let visualization=animated_visualization(history, metric),
             output_path=joinpath(
                 output_dir,
-                visualization.filename,
+                visualization[:filename],
             )
-            gif(visualization.animation, output_path; fps)
+            gif(visualization[:animation], output_path; fps)
             output_path
         end
     end

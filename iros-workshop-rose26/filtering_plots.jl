@@ -19,21 +19,21 @@ publication_backend_color(backend) = @match backend begin
 end
 
 function metric_aggregate(rows, backend, metric)
-    let selected=filter(row -> row.backend == backend, rows),
-        steps=sort(unique(getproperty.(selected, :step)))
+    let selected=filter(row -> row[:backend] == backend, rows),
+        steps=sort(unique(getindex.(selected, :step)))
         values=map(steps) do step
             filter(
                 isfinite,
-                getproperty.(
-                    filter(row -> row.step == step, selected),
+                getindex.(
+                    filter(row -> row[:step] == step, selected),
                     metric,
                 ),
             )
         end
-        (
-            steps=steps,
-            mean=map(mean, values),
-            deviation=map(
+        Dict(
+            :steps => steps,
+            :mean => map(mean, values),
+            :deviation => map(
                 value -> std(value; corrected=false),
                 values,
             ),
@@ -64,16 +64,16 @@ function publication_metric_plot(
         )
         foreach(backends) do backend
             aggregate=metric_aggregate(rows, backend, metric)
-            mean_values=metric_transform.(aggregate.mean, transform)
+            mean_values=metric_transform.(aggregate[:mean], transform)
             deviation_values=@match transform begin
-                :identity => aggregate.deviation
-                :kibibytes => aggregate.deviation ./ 1024
-                :percent => 100 .* aggregate.deviation
-                :log10 => zeros(length(aggregate.deviation))
+                :identity => aggregate[:deviation]
+                :kibibytes => aggregate[:deviation] ./ 1024
+                :percent => 100 .* aggregate[:deviation]
+                :log10 => zeros(length(aggregate[:deviation]))
             end
             plot!(
                 plot_object,
-                aggregate.steps,
+                aggregate[:steps],
                 mean_values;
                 ribbon=deviation_values,
                 linewidth=2,
@@ -87,8 +87,8 @@ function publication_metric_plot(
 end
 
 function phase_boundaries!(plot_object, settings)
-    let first_boundary=settings.phase_steps[1],
-        second_boundary=first_boundary + settings.phase_steps[2]
+    let first_boundary=settings[:phase_steps][1],
+        second_boundary=first_boundary + settings[:phase_steps][2]
         vline!(
             plot_object,
             [first_boundary, second_boundary];

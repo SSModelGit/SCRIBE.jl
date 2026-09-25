@@ -85,7 +85,7 @@ function VulcanJ.conditional_observation_distribution(
             location,
             model.R,
         )
-        Normal(only(moments.μ), sqrt(only(moments.Σ)))
+        Normal(only(moments[:μ]), sqrt(only(moments[:Σ])))
     end
 end
 
@@ -121,7 +121,7 @@ function exploration_problem(settings)
             τ=[1.0],
             ϕ₀=zeros(nᵩ),
             A=Matrix{Float64}(I, nᵩ, nᵩ),
-            Q=settings.process_variance *
+            Q=settings[:process_variance] *
                 Matrix{Float64}(I, nᵩ, nᵩ),
         ),
         smodel=initialize_SCRIBEModel_from_parameters(parameters),
@@ -139,10 +139,10 @@ function exploration_problem(settings)
         initial_model=SCRIBEModelState(
             smodel,
             KFEnvInfo(zeros(nᵩ), Y, zeros(nᵩ), zeros(nᵩ, nᵩ)),
-            settings.noise_variance,
+            settings[:noise_variance],
         ),
         evaluation_axis=collect(
-            range(-5.0, 5.0; length=settings.evaluation_points),
+            range(-5.0, 5.0; length=settings[:evaluation_points]),
         ),
         evaluation_grid=SCRIBEVisualizationGrid(
             evaluation_axis,
@@ -171,28 +171,28 @@ function exploration_problem(settings)
         end,
         mdp=InformativeExplorationMDP(
             (-5.0, 5.0),
-            10.0 / (settings.navigation_points - 1),
+            10.0 / (settings[:navigation_points] - 1),
             planning_dynamics,
             ground_truth,
             initial_model,
             evaluation_grid,
-            settings.n_samples,
+            settings[:n_samples],
         )
-        (mdp=mdp, start=zeros(1, 2))
+        Dict(:mdp => mdp, :start => zeros(1, 2))
     end
 end
 
 function run_exploration(mdp, start, settings)
-    let rng=MersenneTwister(settings.seed),
+    let rng=MersenneTwister(settings[:seed]),
         policy=solve(
             RiskBoundedInfoMCTS(
-                lookahead=settings.lookahead,
-                time_budget=settings.time_budget,
+                lookahead=settings[:lookahead],
+                time_budget=settings[:time_budget],
                 quad_order=1,
                 risk_budget=1.0,
                 alpha=0.0,
                 reference_reward=1.0,
-                rng=MersenneTwister(settings.seed + 1),
+                rng=MersenneTwister(settings[:seed] + 1),
             ),
             mdp,
         ),
@@ -202,7 +202,7 @@ function run_exploration(mdp, start, settings)
         observations=Float64[],
         state=copy(start)
 
-        foreach(1:settings.n_samples) do sample
+        foreach(1:settings[:n_samples]) do sample
             if sample > 1
                 set_environment_model!(policy, state, model)
                 state=gen(
@@ -231,11 +231,11 @@ function run_exploration(mdp, start, settings)
             grid=mdp.evaluation_grid,
             ground_truth=mdp.ground_truth,
         )
-        (
-            model_states=model_states,
-            sampling_locations=sampling_locations,
-            observations=observations,
-            visualization=visualization,
+        Dict(
+            :model_states => model_states,
+            :sampling_locations => sampling_locations,
+            :observations => observations,
+            :visualization => visualization,
         )
     end
 end
