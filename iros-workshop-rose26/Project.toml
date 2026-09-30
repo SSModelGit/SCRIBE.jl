@@ -6,6 +6,9 @@ POMDPs = "a93abf59-7444-517b-a68a-c42f96afdd7d"
 SCRIBE = "9d033a4c-5281-4799-847b-6fce4a2de302"
 VulcanJ = "4dff405b-345f-4980-ad9a-8a8da005ecf3"
 
+VulcanJIntegrations = "3b07cdd2-6275-4a83-bd5c-4b3bbdafbd6b"
+
 [sources]
 SCRIBE = {path = ".."}
 VulcanJ = {path = "../../VulcanJ"}
+VulcanJIntegrations = {path = "../../VulcanJIntegrations"}
