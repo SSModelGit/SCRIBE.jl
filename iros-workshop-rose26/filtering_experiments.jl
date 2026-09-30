@@ -5,6 +5,8 @@ using Match: @match
 using Random
 using Statistics
 
+include(joinpath(@__DIR__, "fusion_baselines.jl"))
+
 abstract type PublicationFusion end
 
 struct SCRIBEFusion <: PublicationFusion end
@@ -382,7 +384,7 @@ function initialize_publication_network(
                     aid,
                     params,
                     observer,
-                    [copy(observations[aid][1].X)],
+                    [copy(observations[aid][1][:X])],
                     system,
                     connector,
                     estimators,
@@ -542,7 +544,11 @@ end
 
 function covariance_intersection_component_update!(component, ng, k)
     local_posteriors = [
-        information_filter_update(ng.vertices[aid].estimators, k)
+        let estimators=ng.vertices[aid].estimators,
+            (Y, y)=compute_info_priors(estimators, k),
+            (δI, δi)=compute_innov_from_obs(estimators, k)
+            ci_measurement_update(Y, y, δI, δi)
+        end
         for aid in component
     ]
     weights = SCRIBE.covariance_intersection_weights(

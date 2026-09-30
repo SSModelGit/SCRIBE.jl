@@ -14,7 +14,14 @@ SCRIBE: Consistent Distributed Environment Modeling\\
 for Communication-Limited Robotic Exploration
 }
 
-\author{Anonymous Authors}
+\author{Shashank Swaminathan$^{1,2}$ and Brian Williams$^{2}$%
+\thanks{$^{1}$Computer Science and Artificial Intelligence Laboratory,
+Massachusetts Institute of Technology, Cambridge, MA, USA
+{\tt\small \{shswami, williams\}@mit.edu}}%
+\thanks{$^{2}$Applied Ocean Science \& Engineering Department,
+Woods Hole Oceanographic Institution, Woods Hole, MA, USA
+{\tt\small shashank.swaminathan@whoi.edu}}%
+}
 
 \begin{document}
 
@@ -66,7 +73,7 @@ knowledge whenever contact resumes.
     ]{res/experiment_4/full/field_reconstruction.png}
     \caption{Two SCRIBE models. Top: a simulated field, one robot's final GSF
     estimate, and four robot paths. Bottom: held-out Ram Head ROMS snapshot
-    5021 and its EOF estimate after 300 samples ($b=2$, RMSE $0.049$).}
+    5021 and its EOF estimate after 300 samples ($b=2$, RMSE $0.049$). \vspace{-0.5cm}}
     \label{fig:field-reconstruction}
 \end{figure}
 
@@ -103,7 +110,7 @@ loss of consistency, a global graph, or a synchronized team-wide update.
         width=0.8\textwidth,
         trim=0 0 0 0,
         clip
-    ]{res/experiment_4/full/distributed_performance.png}
+    ]{res/experiment_4/full/distributed_performance.png}\vspace{-0.5cm}
     \caption{Twelve four-robot trials of 36 rounds. Shading marks complete
     blackout; otherwise each robot communicates with at most one in-range
     peer. Curves give the mean and one standard deviation. The right panel
@@ -165,7 +172,7 @@ rather than an $O(kd_z)$ observation history. From
 $\hat{\bm\phi}_j=\bm Y_j^{-1}\bm y_j$, GSFs predict
 $\bm\psi^T(x)\hat{\bm\phi}_j$; EOFs use
 $\bm L_{\bm X}(\overline{\bm f}+\bm E_r\hat{\bm\phi}_j)$.
-
+\vspace{-0.5cm}
 \subsection{Fusion under an Unstable Network}
 
 Agents' priors may contain shared observations, so adding them can count the
@@ -222,7 +229,7 @@ on the connection process.
     \begin{minipage}[t]{0.485\textwidth}
         \centering
         \includegraphics[width=0.95\linewidth]{%
-            res/asynchronous_model_fusion/full/asynchronous_model_fusion_poster.png}
+            res/asynchronous_model_fusion/full/asynchronous_model_fusion_poster.png}\vspace{-0.2cm}
         \caption{Asynchronous fusion during continuous sensing. Circles mark
         peer encounters in the selected six-agent mission; the bottom row
         compares its final model with the ROMS ground truth. \vspace{-0.5cm}}
@@ -232,7 +239,7 @@ on the connection process.
     \begin{minipage}[t]{0.485\textwidth}
         \centering
         \includegraphics[width=0.95\linewidth]{%
-            res/agent_number_scaling/full/agent_number_scaling_cost_poster.png}
+            res/agent_number_scaling/full/agent_number_scaling_cost_poster.png}\vspace{-0.2cm}
         \caption{Uncertainty, computation, and communication scaling across
         team sizes, network densities, and connectivity conditions. Dashed curves
         denote 50\% communication availability. \vspace{-0.5cm}}
@@ -275,15 +282,8 @@ with distance-limited networks and a twelve-round blackout in
 Fig.~\ref{fig:distributed-performance}. SCRIBE has the lowest final distributed
 error and, like CI, contracts disagreement after reconnection; IKF remains high
 because it does not reconcile correlated priors. SCRIBE's final RMSE
-($0.523\pm0.060$) approaches centralized sharing ($0.458\pm0.052$), improves
-on CI ($0.564\pm0.084$), and halves the no-communication error
-($1.041\pm0.053$).
-
-Pooling each regime's samples isolates path quality. SCRIBE nearly matches
-centralized pooled RMSE ($0.455$ versus $0.458$) and integrated variance
-($0.0488$ versus $0.0473$), the latter within 3.2\%. Consistent fusion thus
-recovers almost all information gathered under ideal sharing, without joint
-planning or team-wide communication.
+approaches centralized sharing, improves
+on CI, and halves the no-communication error. Pooling each regime's samples indicates the quality of the resultant paths under the models learned under the sharing regime. SCRIBE nearly matches centralized pooled RMSE and integrated variance.
 
 \section{Conclusion}
 

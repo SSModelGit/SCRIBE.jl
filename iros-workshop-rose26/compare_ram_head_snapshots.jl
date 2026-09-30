@@ -4,12 +4,8 @@ include("ram_head_eof_experiment.jl")
 
 """Compare held-out maps with identical priors, sampling paths, and EOFs."""
 function compare_ram_head_snapshots()
-    params = load_eof_model_parameters(RAM_HEAD_EOF_MODEL)
-    stride = Int(metadata_value(params.metadata["temporal_stride"]))
-    roms = let archive=read_roms_velocity(RAM_HEAD_ARCHIVE, :u)
-        prepare_roms_velocity(archive; temporal_stride=stride)
-    end
-    GC.gc()
+    params = workshop_eof_parameters()
+    roms = workshop_roms()
     first_validation = params.decomposition.n_samples + 1
     candidates = unique(vcat(4923, round.(Int, range(
         first_validation, size(roms[:data], 2); length=32))))
@@ -35,6 +31,9 @@ function compare_ram_head_snapshots()
         end
     end
     ordered = sort(results; by=r -> r[:relative_rmse] + 2max(0, 0.15-r[:balance]))
+    open(joinpath(output, "selected_snapshot.txt"), "w") do io
+        println(io, first(ordered)[:truth_snapshot])
+    end
     for page in 1:cld(length(ordered), 8)
         subset = ordered[(8page-7):min(8page, length(ordered))]
         panels = reduce(vcat, map(subset) do r

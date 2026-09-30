@@ -4,10 +4,51 @@ const RAM_HEAD_ARCHIVE = normpath(joinpath(
     @__DIR__, "..", "bigdata", "rams_head_model_output",
     "stjohn_hourly_5m_velocity_ramhead_v2.mat",
 ))
-const RAM_HEAD_EOF_MODEL = normpath(joinpath(
-    @__DIR__, "..", "examples", "res", "eof-climate-models", "offline",
-    "rams_head_u_eof.mat",
-))
+using LinearAlgebra
+using Random
+using Serialization
+
+const WORKSHOP_EOF_RANK = 10
+const WORKSHOP_EOF_DIRECTORY = joinpath(@__DIR__, "res", "model")
+const RAM_HEAD_EOF_MODEL = joinpath(WORKSHOP_EOF_DIRECTORY, "rams_head_u_eof.mat")
+
+function workshop_roms()
+    path = joinpath(WORKSHOP_EOF_DIRECTORY, "roms.jls")
+    isfile(path) && return open(deserialize, path)
+    roms = let archive=read_roms_velocity(RAM_HEAD_ARCHIVE, :u)
+        prepare_roms_velocity(archive; temporal_stride=3)
+    end
+    GC.gc()
+    mkpath(WORKSHOP_EOF_DIRECTORY)
+    open(io -> serialize(io, roms), path, "w")
+    roms
+end
+
+function workshop_eof_parameters()
+    if !isfile(RAM_HEAD_EOF_MODEL)
+        BLAS.set_num_threads(1)
+        roms = workshop_roms()
+        n_training = floor(Int, 0.8size(roms[:data], 2))
+        model = initialize_eof_climate_model(
+            roms[:data][:, 1:n_training];
+            locations=roms[:locations], rank=WORKSHOP_EOF_RANK,
+            algorithm=:randomized, oversample=16, power_iterations=2,
+            rng=MersenneTwister(12), process_covariance=0.0,
+            interpolation=:nearest,
+            metadata=Dict("temporal_stride" => 3, "training_snapshots" => n_training,
+                "grid_shape" => collect(roms[:grid_shape]),
+                "wet_mask" => Int8.(roms[:wet_mask]), "workshop_revision" => 2),
+        )
+        save_eof_model(RAM_HEAD_EOF_MODEL, model)
+    end
+    params = load_eof_model_parameters(RAM_HEAD_EOF_MODEL)
+    params
+end
+
+function ram_head_truth_snapshot()
+    selection = joinpath(@__DIR__, "res", "eof_snapshot_comparison", "selected_snapshot.txt")
+    isfile(selection) ? parse(Int, strip(read(selection, String))) : 5534
+end
 
 metadata_value(x) = x isa AbstractArray ? only(x) : x
 
@@ -32,22 +73,18 @@ end
 """Assimilate one held-out Ram Head current field in a retained EOF basis."""
 function run_ram_head_eof_experiment(;
     prior_snapshot=3030,
-    truth_snapshot=5021,
+    truth_snapshot=ram_head_truth_snapshot(),
     n_samples=300,
     sensor_variance=1e-4,
 )
-    params = load_eof_model_parameters(RAM_HEAD_EOF_MODEL)
-    stride = Int(metadata_value(params.metadata["temporal_stride"]))
-    roms = let archive=read_roms_velocity(RAM_HEAD_ARCHIVE, :u)
-        prepare_roms_velocity(archive; temporal_stride=stride)
-    end
-    GC.gc()
+    params = workshop_eof_parameters()
+    roms = workshop_roms()
     run_ram_head_eof_experiment(params, roms; prior_snapshot, truth_snapshot,
         n_samples, sensor_variance)
 end
 
 function run_ram_head_eof_experiment(params, roms;
-    prior_snapshot=3030, truth_snapshot=5021, n_samples=300,
+    prior_snapshot=3030, truth_snapshot=ram_head_truth_snapshot(), n_samples=300,
     sensor_variance=1e-4,
 )
     model = eof_model_at_coefficients(

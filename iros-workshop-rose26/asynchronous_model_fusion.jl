@@ -12,8 +12,8 @@ using Statistics
 include(joinpath(@__DIR__, "ram_head_eof_experiment.jl"))
 include(joinpath(@__DIR__, "workshop_plotting.jl"))
 
-const ASYNCHRONOUS_TRUTH_SNAPSHOT = 5534
-const ASYNCHRONOUS_CHECKPOINT_VERSION = 1
+const ASYNCHRONOUS_TRUTH_SNAPSHOT = 5510
+const ASYNCHRONOUS_CHECKPOINT_VERSION = 2
 
 mutable struct AsynchronousScribe <: EnvScribe
     k
@@ -131,13 +131,9 @@ end
 
 function load_asynchronous_environment()
     params = zero_mean_eof_parameters(
-        load_eof_model_parameters(RAM_HEAD_EOF_MODEL),
+        workshop_eof_parameters(),
     )
-    stride = Int(metadata_value(params.metadata["temporal_stride"]))
-    roms = let archive=read_roms_velocity(RAM_HEAD_ARCHIVE, :u)
-        prepare_roms_velocity(archive; temporal_stride=stride)
-    end
-    GC.gc()
+    roms = workshop_roms()
     truth = roms[:data][:, ASYNCHRONOUS_TRUTH_SNAPSHOT]
     coefficients = eof_coefficients(params, truth)
     standardized = coefficients ./ sqrt.(diag(params.P₀))
@@ -1029,8 +1025,8 @@ function rmse_panel(rows; render_profile=:paper, smoke=false)
             "(a) Team RMSE comparison (smoke check)" :
             "(a) Team RMSE comparison",
         grid=true,
-        legend=:outertop,
-        legend_columns=min(4, length(team_sizes)),
+        legend=:topright,
+        legend_columns=2,
     )
     foreach(zip(team_sizes, colors)) do (n_agents, color)
         curve = curve_summary(rows, n_agents)
@@ -1074,12 +1070,10 @@ function agent_rmse_panel(trial; render_profile=:paper)
         ;
         xlabel="Elapsed timesteps",
         ylabel="Agent NRMSE",
-        title="(b) Agent RMSE, n=$(trial[:n_agents]) (communication dots)",
+        title="(b) Agent RMSE, n=$(trial[:n_agents])",
         grid=true,
-        legend=:outertop,
-        legend_columns=-1,
-        ylims=(0.38, 1.1),
-        yticks=0.4:0.2:1.0,
+        legend=:topright,
+        legend_columns=2,
     )
     foreach(zip(ids, colors)) do (aid, color)
         plot!(
@@ -1097,9 +1091,8 @@ function agent_rmse_panel(trial; render_profile=:paper)
             history[:errors][aid][communication_steps .+ 1];
             color,
             marker=:circle,
-            markersize=style.markersize,
-            markerstrokecolor=:black,
-            markerstrokewidth=0.8,
+            markersize=render_profile == :poster ? 2.0 : 1.2,
+            markerstrokewidth=0,
             label=false,
         )
     end
@@ -1110,38 +1103,6 @@ function agent_rmse_panel(trial; render_profile=:paper)
         right_margin=3Plots.mm,
         bottom_margin=9Plots.mm,
         top_margin=4Plots.mm,
-    )
-    foreach(enumerate(zip(ids, colors))) do (index, (aid, color))
-        plot!(
-            panel,
-            history[:steps],
-            history[:errors][aid];
-            inset=index == 1 ? (
-                1,
-                bbox(0.04, 0.25, 0.46, 0.43, :top, :right),
-            ) : nothing,
-            subplot=2,
-            color,
-            linewidth=max(style.linewidth - 1.0, 1.5),
-            label=false,
-        )
-    end
-    plot!(
-        panel;
-        subplot=2,
-        xlims=(0, 650),
-        ylims=(0.38, 4.1),
-        xticks=([0, 300, 600], ["0", "300", "600"]),
-        yticks=([0.5, 2.0, 4.0], ["0.5", "2", "4"]),
-        title="Initial transient",
-        titlefontsize=max(style.tickfontsize - 2, 10),
-        tickfontsize=max(style.tickfontsize - 4, 9),
-        grid=true,
-        gridalpha=0.13,
-        foreground_color_grid=:gray75,
-        background_color_inside=:white,
-        legend=false,
-        margin=1Plots.mm,
     )
     panel
 end
@@ -1317,7 +1278,7 @@ function save_asynchronous_figure(
         limit;
         render_profile=:poster,
         left_margin=0Plots.mm,
-        right_margin=4Plots.mm,
+        right_margin=12Plots.mm,
         colorbar=true,
         show_latitude=false,
     )
@@ -1351,7 +1312,7 @@ function save_asynchronous_figure(
         truth_panel,
         reconstruction_panel;
         layout=grid(2, 2; heights=[0.46, 0.54]),
-        size=(1900, 1180),
+        size=(2000, 1280),
         plot_title="Asynchronous SCRIBE Model Fusion During Continuous Sensing",
         plot_titlefontsize=style.titlefontsize,
     )

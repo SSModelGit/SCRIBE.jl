@@ -10,10 +10,12 @@ using SCRIBE
 using Serialization
 using Statistics
 using VulcanJ
+using VulcanJIntegrations
 
 include(joinpath(@__DIR__, "asynchronous_model_fusion.jl"))
+include(joinpath(@__DIR__, "fusion_baselines.jl"))
 
-const SCALING_CHECKPOINT_VERSION = 1
+const SCALING_CHECKPOINT_VERSION = 2
 const SCALING_DIRECTIONS = Dict(
     :north => CartesianIndex(1, 0),
     :northeast => CartesianIndex(1, 1),
@@ -83,92 +85,28 @@ VulcanJ.initial_environment_model(
     _,
 ) = problem.initial_model
 
-function coefficient_moments_at(model)
-    posterior_coefficient_moments(model.information)
-end
-
-function state_measurement_moments(problem, model, state)
-    let coefficients=coefficient_moments_at(model),
-        H=reshape(problem.modes[state.row, :], 1, :),
-        μ=problem.climatology[state.row] + only(H * coefficients[:μ]),
-        σ²=only(H * coefficients[:Σ] * H') +
-            problem.measurement_variance[state.row]
-        (μ=μ, σ²=max(σ², eps(Float64)))
-    end
-end
-
-function VulcanJ.conditional_observation_distribution(
-    problem::ROMSExplorationProblem,
-    model::SCRIBEModelState,
-    state::ROMSExplorationState,
-)
-    let moments=state_measurement_moments(problem, model, state)
-        Normal(moments.μ, sqrt(moments.σ²))
-    end
-end
-
-function condition_scaling_model(problem, model, state, observation)
-    let H=reshape(problem.modes[state.row, :], 1, :),
-        innovation=measurement_information(
-            H,
-            [observation - problem.climatology[state.row]],
-            reshape([problem.measurement_variance[state.row]], 1, 1),
-        ),
-        Y=model.information.Y + innovation[:δI],
-        information=KFEnvInfo(
-            model.information.y + innovation[:δi],
-            (Y + Y') / 2,
-            innovation[:δi],
-            innovation[:δI],
-        )
-        SCRIBEModelState(model.smodel, information, model.R)
-    end
-end
-
-function VulcanJ.condition_environment_model(
-    problem::ROMSExplorationProblem,
-    model::SCRIBEModelState,
-    state::ROMSExplorationState,
-    observation,
-)
-    condition_scaling_model(problem, model, state, observation)
+# The integration adapter uses R as supplied. Preserve the experiment's
+# sensor + EOF truncation covariance for assimilation, without adding it twice
+# to predictive distributions (which already include EOF residual variance).
+function VulcanJ.condition_environment_model(problem::ROMSExplorationProblem,
+    model::SCRIBEModelState, state::ROMSExplorationState, observation)
+    X = VulcanJ.extract_location(state)
+    R = eof_effective_measurement_covariance(model.smodel, X, model.R)
+    effective = SCRIBEModelState(model.smodel, model.information, R)
+    posterior = invoke(VulcanJ.condition_environment_model,
+        Tuple{Any, SCRIBEModelState, Any, Any}, problem, effective, state, observation)
+    SCRIBEModelState(model.smodel, posterior.information, model.R)
 end
 
 function field_variance(problem, information)
     tr(problem.variance_gram * recover_covariance_from_info(information))
 end
 
-function VulcanJ.information_gain(
-    ::Val{:variance_reduction},
-    problem::ROMSExplorationProblem,
-    prior::SCRIBEModelState,
-    posterior::SCRIBEModelState,
-    _,
-    _,
-)
-    max(
-        field_variance(problem, prior.information) -
-        field_variance(problem, posterior.information),
-        0.0,
-    )
-end
-
-function VulcanJ.expected_information_gain(
-    ::Val{:variance_reduction},
-    problem::ROMSExplorationProblem,
-    model::SCRIBEModelState,
-    state::ROMSExplorationState,
-    _,
-)
-    let coefficients=coefficient_moments_at(model),
-        H=reshape(problem.modes[state.row, :], 1, :),
-        h=vec(H),
-        cross=coefficients[:Σ] * h,
-        innovation_variance=dot(h, cross) +
-            problem.measurement_variance[state.row]
-        dot(cross, problem.variance_gram * cross) / innovation_variance
-    end
-end
+# Identical to the package's mean-field variance reduction. The fixed residual
+# variance cancels, so the cached modal Gram matrix avoids dense field covariance.
+VulcanJ.information_gain(::Val{:variance_reduction}, problem::ROMSExplorationProblem,
+    prior::SCRIBEModelState, posterior::SCRIBEModelState, state, observation) =
+    field_variance(problem, prior.information) - field_variance(problem, posterior.information)
 
 function predictive_scaling_problem(problem, model)
     ROMSExplorationProblem(
@@ -177,10 +115,10 @@ function predictive_scaling_problem(problem, model)
                 [(location=permutedims(problem.locations[row, :]),
                   observation=0.0)],
             )
-            rand(
+            only(rand(
                 rng,
                 conditional_observation_distribution(problem, model, state),
-            )
+            ))
         end,
         problem.neighbors,
         problem.locations,
@@ -326,7 +264,7 @@ function fixed_rollout_action(policy, state, model, remaining_steps, iterations)
         0.0,
     )
     foreach(1:iterations) do _
-        VulcanJ.sample_rollout(policy, policy.root, Inf)
+        VulcanJ.sample_rollout(policy, policy.root)
     end
     VulcanJ.cleanup!(policy, policy.root)
     isnothing(policy.root.best) ?

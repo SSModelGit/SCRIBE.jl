@@ -7,6 +7,7 @@ include(joinpath(@__DIR__, "ram_head_eof_experiment.jl"))
 using Plots
 using Statistics
 
+
 const EXPLORATION_BACKENDS = (
     :centralized,
     :scribe,
@@ -45,7 +46,6 @@ Base.@kwdef mutable struct ExplorationBackendState
     histories
     oracle
     network
-    known_observations
     communication
     cumulative_reward
 end
@@ -180,36 +180,22 @@ function exploration_policy(mdp, settings, seed)
             reference_reward=1.0,
             rng=MersenneTwister(seed),
         ),
-        mdp,
+        mdp;
+        objective=Val(:variance_reduction),
     )
 end
 
 """Choose an action from a fixed rollout budget for repeatable comparisons."""
 function fixed_budget_action(policy, state, model, planning_iterations)
     set_environment_model!(policy, state, model)
-    nodekey = VulcanJ.initialize_nodekey(state)
-    policy.tree_nodes[nodekey] = TreeNode(
-        visits=0,
-        action_values=Dict(),
-        action_counts=Dict(),
-        actions_tried=Set(),
-    )
+    policy.root = VulcanJ.initialize_node(policy, state, model, 0, 0.0, 0.0)
     foreach(1:planning_iterations) do _
-        sample_rollout(
-            policy,
-            nodekey,
-            model,
-            0,
-            policy.solver.lookahead,
-            0.0,
-            0.0,
-            policy.solver.risk_budget,
-        )
+        VulcanJ.sample_rollout(policy, policy.root)
     end
-    root = policy.tree_nodes[nodekey]
-    isempty(root.action_values) ?
-        first(actions(policy.mdp, state)) :
-        argmax(root.action_values)
+    VulcanJ.cleanup!(policy, policy.root)
+    isnothing(policy.root.best) ?
+        first(actions(policy.problem, state)) :
+        policy.root.branches[policy.root.best].action
 end
 
 function backend_models(smodel, information, noise_variance)
@@ -459,57 +445,9 @@ function initialize_backend_state(backend, problem, settings, seed)
             problem[:mdp].initial_model.R,
         ),
         network=nothing,
-        known_observations=Dict(
-            aid => Set{Tuple{String, Int}}()
-            for aid in ids
-        ),
         communication=Dict(:messages => 0, :bytes => 0, :iterations => 0),
         cumulative_reward=0.0,
     )
-end
-
-function replay_information(
-    prior,
-    params,
-    plans,
-    known_observations,
-    current_step,
-)
-    information = copy(prior)
-    foreach(1:current_step) do step
-        Y_prior, y_prior = publication_prior(
-            information,
-            params.A,
-            params.w[:Q],
-        )
-        available = filter(
-            observation_id -> last(observation_id) == step,
-            collect(known_observations),
-        )
-        innovations = map(available) do (source, observation_step)
-            observation = plans[source][observation_step]
-            innovation = measurement_information(
-                observation[:H],
-                observation[:z],
-                observation[:R],
-            )
-            (innovation[:δI], innovation[:δi])
-        end
-        δI = isempty(innovations) ?
-            zeros(size(Y_prior)) :
-            sum(first, innovations)
-        δi = isempty(innovations) ?
-            zeros(length(y_prior)) :
-            sum(last, innovations)
-        Y = Y_prior + δI
-        information = KFEnvInfo(
-            y_prior + δi,
-            (Y + Y') / 2,
-            δi,
-            δI,
-        )
-    end
-    information
 end
 
 function observation_record_bytes(observation)
@@ -521,63 +459,28 @@ function observation_record_bytes(observation)
 end
 
 function last_k_observation_step!(state, problem, settings, step)
-    foreach(state.ids) do aid
-        push!(state.known_observations[aid], (aid, step))
-    end
+    params = problem[:mdp].initial_model.smodel.params
+    information = Dict(aid => let
+        Y, y = publication_prior(state.models[aid].information, params.A, params.w[:Q])
+        δI, δi = zeros(size(Y)), zeros(length(y))
+        assimilate_shared_observation(KFEnvInfo(y, Y, δi, δI), state.plans[aid][step])
+    end for aid in state.ids)
     edges = distributed_edges(step, settings, state.states)
-    messages = 0
-    bytes = 0
-    transfers = Dict(
-        aid => Set{Tuple{String, Int}}()
-        for aid in state.ids
-    )
+    messages, bytes = 0, 0
     foreach(state.ids) do sender
+        buffer = state.plans[sender][max(1, step - settings[:last_k] + 1):step]
         foreach(edges[sender]) do receiver
-            missing = sort(
-                collect(
-                    setdiff(
-                        state.known_observations[sender],
-                        state.known_observations[receiver],
-                    ),
-                );
-                by=observation_id -> (last(observation_id), first(observation_id)),
-                rev=true,
-            )
-            selected = missing[1:min(settings[:last_k], length(missing))]
-            if !isempty(selected)
-                messages += 1
-                union!(transfers[receiver], selected)
-                bytes += sum(selected) do (source, observation_step)
-                    observation_record_bytes(
-                        state.plans[source][observation_step],
-                    )
-                end
+            messages += 1
+            bytes += sum(observation_record_bytes, buffer)
+            foreach(buffer) do observation
+                information[receiver] = assimilate_shared_observation(
+                    information[receiver], observation)
             end
         end
     end
-    foreach(state.ids) do aid
-        union!(state.known_observations[aid], transfers[aid])
-    end
-    params = problem[:mdp].initial_model.smodel.params
-    state.models = Dict(
-        aid => SCRIBEModelState(
-            state.oracle.smodel,
-            replay_information(
-                problem[:mdp].initial_model.information,
-                params,
-                state.plans,
-                state.known_observations[aid],
-                step,
-            ),
-            state.oracle.R,
-        )
-        for aid in state.ids
-    )
-    Dict(
-        :messages => messages,
-        :bytes => bytes,
-        :iterations => 1,
-    )
+    state.models = Dict(aid => SCRIBEModelState(state.oracle.smodel,
+        information[aid], state.oracle.R) for aid in state.ids)
+    Dict(:messages => messages, :bytes => bytes, :iterations => 1)
 end
 
 function update_backend_information!(

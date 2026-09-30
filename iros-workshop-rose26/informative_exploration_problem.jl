@@ -5,6 +5,7 @@ using POMDPs
 using Random
 using SCRIBE
 using VulcanJ
+using VulcanJIntegrations
 
 const EXPLORATION_ACTIONS = (
     :north,
@@ -20,7 +21,7 @@ const EXPLORATION_ACTIONS = (
 struct InformativeExplorationMDP <: MDP{Matrix, Symbol}
     bounds
     step_size
-    planning_dynamics
+    planning_locations
     ground_truth
     initial_model
     evaluation_grid
@@ -60,53 +61,22 @@ VulcanJ.initial_environment_model(
     _,
 ) = mdp.initial_model
 
-function VulcanJ.expected_information_gain(
-    mdp::InformativeExplorationMDP,
-    model::SCRIBEModelState,
-    location,
-    ::Integer,
-)
-    integrated_variance_reduction(
-        model.information,
-        prediction_dynamics(model.smodel, location),
-        mdp.planning_dynamics,
-        model.R,
-    )
+# The posterior is supplied separately; this example's state is only a location.
+VulcanJ.state_time(::InformativeExplorationMDP, _) = 0
+VulcanJ.observation_history(::VulcanJ.AbstractInfoMCTS, ::InformativeExplorationMDP, _) = ()
+function VulcanJ.generated_step(::VulcanJ.AbstractInfoMCTS,
+    problem::InformativeExplorationMDP, model::SCRIBEModelState, state, action, rng)
+    next = gen(problem, state, action, rng).sp
+    next, rand(rng, conditional_observation_distribution(problem, model, next))
 end
 
-function VulcanJ.conditional_observation_distribution(
-    ::InformativeExplorationMDP,
-    model::SCRIBEModelState,
-    location,
-)
-    let moments=posterior_measurement_moments(
-            model.smodel,
-            model.information,
-            location,
-            model.R,
-        )
-        Normal(only(moments[:μ]), sqrt(only(moments[:Σ])))
-    end
-end
+VulcanJ.cellsites(mdp::InformativeExplorationMDP) =
+    [permutedims(row) for row in eachrow(mdp.planning_locations)]
 
-function VulcanJ.condition_environment_model(
-    ::InformativeExplorationMDP,
-    model::SCRIBEModelState,
-    location,
-    observation,
-)
-    SCRIBEModelState(
-        model.smodel,
-        condition_on_measurement(
-            model.smodel,
-            model.information,
-            location,
-            observation,
-            model.R,
-        ),
-        model.R,
-    )
-end
+# The experiment reports expected integrated-variance reduction along its path.
+VulcanJ.expected_information_gain(mdp::InformativeExplorationMDP,
+    model::SCRIBEModelState, location, order::Integer) =
+    expected_information_gain(Val(:variance_reduction), mdp, model, location, order)
 
 grid_locations(x, y) =
     reduce(vcat, ([xᵢ yⱼ] for yⱼ in y for xᵢ in x))
@@ -149,10 +119,7 @@ function exploration_problem(settings)
             evaluation_axis,
         ),
         planning_axis=collect(range(-5.0, 5.0; length=21)),
-        planning_dynamics=prediction_dynamics(
-            smodel,
-            grid_locations(planning_axis, planning_axis),
-        ),
+        planning_locations=grid_locations(planning_axis, planning_axis),
         ground_truth=X -> map(eachrow(X)) do x
             let x₁=x[1],
                 x₂=x[2],
@@ -172,7 +139,7 @@ function exploration_problem(settings)
         mdp=InformativeExplorationMDP(
             (-5.0, 5.0),
             10.0 / (settings[:navigation_points] - 1),
-            planning_dynamics,
+            planning_locations,
             ground_truth,
             initial_model,
             evaluation_grid,
@@ -194,7 +161,8 @@ function run_exploration(mdp, start, settings)
                 reference_reward=1.0,
                 rng=MersenneTwister(settings[:seed] + 1),
             ),
-            mdp,
+            mdp;
+            objective=Val(:variance_reduction),
         ),
         model=initial_environment_model(mdp, start),
         model_states=SCRIBEModelState[model],
