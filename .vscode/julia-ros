@@ -1,0 +1,2 @@
+#!/usr/bin/zsh -i
+exec /home/shashank/.distrobox/jdev/.juliaup/bin/julia --startup-file=yes --color=yes "$@"

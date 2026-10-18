@@ -45,11 +45,19 @@ struct NetworkConnector
     NetworkConnector(neighbors::Vector, outbox::Dict) = new(neighbors, outbox)
 end
 
+struct ROSConnector
+    qos
+    timeout
+    namespace
+    sensor_namespace
+end
+
 abstract type EnvScribe end
 abstract type EnvEstimators end
 
 export EnvScribe, EnvEstimators, SCRIBEAgent, initialize_agent
-export ConsensusMessage, NetworkGraph, NetworkConnector, init_network_graph, connected_agents, update_network_graph_edges
+export ConsensusMessage, NetworkGraph, NetworkConnector, ROSConnector,
+    init_network_graph, connected_agents, update_network_graph_edges
 
 struct SCRIBEAgent
     id::String

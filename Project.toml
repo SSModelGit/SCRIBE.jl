@@ -15,8 +15,15 @@ Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Reexport = "189a3867-3050-52da-a836-e630ba90ab69"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 
+[weakdeps]
+ROS2 = "493365b4-7e18-460b-8b90-ec3e7f80d3eb"
+
+[extensions]
+R2SCRIBE = "ROS2"
+
 [compat]
 NCDatasets = "0.14.15"
+ROS2 = "0.2.0"
 julia = "1"
 
 [extras]
