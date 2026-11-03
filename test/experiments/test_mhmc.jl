@@ -107,13 +107,24 @@ function mul_agent_perf_conn(run_name::String, nₐ=3, nₛ=100; testing=true, t
     for i in 1:nₛ
         print("k: ", i)
         while true
-            done = map(aid->distributed_fusion(i, aid, ng, 1e-8, 360), agent_ids)
+            done = map(
+                aid->distributed_fusion(
+                    i,
+                    ng.vertices[aid],
+                    1e-8,
+                    360,
+                ),
+                agent_ids,
+            )
             deliveries = deliver_consensus_messages(i, ng)
             for (aid, msg) in deliveries
                 for nb in ng.edges[aid]
                     if nb != aid && haskey(ng.vertices, nb)
-                        consume_consensus_message!(nb, ng.vertices[nb].net_conn,
-                                                   msg, i, ng)
+                        consume_consensus_message!(
+                            ng.vertices[nb].net_conn,
+                            msg,
+                            i,
+                        )
                     end
                 end
             end
@@ -200,13 +211,24 @@ function mul_agent_poor_conn(run_name::String, nₐ=3, nₛ=100; testing=true, t
 
         print("k: ", i)
         while true
-            done = map(aid->distributed_fusion(i, aid, ng, 1e-8, 360), agent_ids)
+            done = map(
+                aid->distributed_fusion(
+                    i,
+                    ng.vertices[aid],
+                    1e-8,
+                    360,
+                ),
+                agent_ids,
+            )
             deliveries = deliver_consensus_messages(i, ng)
             for (aid, msg) in deliveries
                 for nb in ng.edges[aid]
                     if nb != aid && haskey(ng.vertices, nb)
-                        consume_consensus_message!(nb, ng.vertices[nb].net_conn,
-                                                   msg, i, ng)
+                        consume_consensus_message!(
+                            ng.vertices[nb].net_conn,
+                            msg,
+                            i,
+                        )
                     end
                 end
             end

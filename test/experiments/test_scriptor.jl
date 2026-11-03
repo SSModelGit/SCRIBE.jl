@@ -173,13 +173,24 @@ function single_run(run_name::String, gt_desc::Tuple, ag_desc::Dict;
 
         print("k: ", i)
         while true
-            done = map(aid->distributed_fusion(i, aid, ng, 1e-8, 360), agent_ids)
+            done = map(
+                aid->distributed_fusion(
+                    i,
+                    ng.vertices[aid],
+                    1e-8,
+                    360,
+                ),
+                agent_ids,
+            )
             deliveries = deliver_consensus_messages(i, ng)
             for (aid, msg) in deliveries
                 for nb in ng.edges[aid]
                     if nb != aid && haskey(ng.vertices, nb)
-                        consume_consensus_message!(nb, ng.vertices[nb].net_conn,
-                                                   msg, i, ng)
+                        consume_consensus_message!(
+                            ng.vertices[nb].net_conn,
+                            msg,
+                            i,
+                        )
                     end
                 end
             end
