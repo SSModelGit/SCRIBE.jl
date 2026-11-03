@@ -1,5 +1,5 @@
 /Manifest.toml
-.vscode/settings.json
+.vscode/
 *.jld2
 *.png
 *feedback*
@@ -9,3 +9,4 @@ poetry.lock
 pyproject.toml
 *thesis*.pdf
 bigdata/
+.JuliaFormatter.toml

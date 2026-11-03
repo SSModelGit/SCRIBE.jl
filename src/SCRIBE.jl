@@ -15,12 +15,15 @@ struct ConsensusMessage
     lv::Integer
     seq::Integer
     degree::Integer
+    participants::Vector{String}
     payload::Tuple{Matrix{Float64}, Vector{Float64}}
 end
 
 """Network information stored locally by agent.
 
-Knows its immediate neighbors, and thus who to check in the network graph.
+The connector knows only the agent's current immediate neighbors and messages
+received from them. The network simulator is responsible for routing messages
+and updating this local neighbor list when links change.
 
 Outbox: Messages to be provided to other agents.
 - Structure: Dictionary of specific values.
@@ -35,8 +38,8 @@ Outbox: Messages to be provided to other agents.
     - "cache" => Dictionary mapping neighbor id (String) => `ConsensusMessage`. Represents messages received from neighbors for the current round; acts as an incoming mailbox. Initialize to empty `Dict{String,Any}()`.
     - "msg_out" => The `ConsensusMessage` this agent has queued for delivery (or `nothing`). The communication/test harness should read this to simulate sending. Initialize to `nothing`.
     - "complete" => Boolean indicating whether the agent completed the full `:prior`→`:innov` fusion cycle for the current timestep. Initialize to `false`.
-    - "n_eff" => Number of agents in the participating connected component. Integer, initialize to `1`.
-    - "stage_ready" => Boolean indicating local convergence of the current consensus stage. Initialize to `false`.
+    - "n_eff" => Number of participants learned through consensus messages. Integer, initialize to `1`.
+    - "participants" => Agent identifiers learned through message propagation. Initialize with the local agent identifier.
 """
 struct NetworkConnector
     neighbors::Vector
@@ -52,12 +55,15 @@ struct ROSConnector
     sensor_namespace
 end
 
+function initialize_ros_agent end
+
 abstract type EnvScribe end
 abstract type EnvEstimators end
 
 export EnvScribe, EnvEstimators, SCRIBEAgent, initialize_agent
-export ConsensusMessage, NetworkGraph, NetworkConnector, ROSConnector,
-    init_network_graph, connected_agents, update_network_graph_edges
+export ConsensusMessage, NetworkGraph, NetworkConnector,
+    init_network_graph, connected_agents, update_network_graph_edges,
+    ROSConnector, initialize_ros_agent
 
 struct SCRIBEAgent
     id::String
@@ -128,12 +134,8 @@ function update_network_graph_edges(new_edges::Dict, ng::NetworkGraph)
         normalized_edges[aid] = neighbors
     end
     for (aid, neighbors) in normalized_edges
-        for nb in neighbors
-            @assert aid in normalized_edges[nb] "SCRIBE consensus requires an undirected communication graph; edge $aid→$nb has no reverse edge."
-        end
         ng.edges[aid] = copy(neighbors)
         if haskey(ng.vertices, aid)
-            # Compatibility mirror only. Consensus logic reads `ng.edges`.
             empty!(ng.vertices[aid].net_conn.neighbors)
             append!(ng.vertices[aid].net_conn.neighbors, neighbors)
         end
@@ -160,30 +162,39 @@ function init_network_graph(edges::Dict{String, Vector{String}})
                  connected_agents(normalized_edges))
 end
 
-"""Creates a SCRIBEAgent appropriate for the KF system, from a KF Estimator.
-"""
-function initialize_agent(id::String, kf_estimators::KFEstimators, net_graph::NetworkGraph)
+"""Create a SCRIBE agent with only its locally visible neighbors."""
+function initialize_agent(id::String, kf_estimators::KFEstimators,
+                          neighbors::Vector{String})
     let ag=kf_estimators.system
-        nc=NetworkConnector(net_graph.edges[id], Dict{String, Any}("lc"=>nothing, "ln"=>nothing,
-                                                                   "lv"=>0, "cvc"=>0,
-                                                                   "prior"=>nothing, "innov"=>nothing,
-                                                                   "stage"=>:prior, "seq"=>0,
-                                                                   "cache"=>Dict{String, Any}(),
-                                                                   "msg_out"=>nothing,
-                                                                   "complete"=>false,
-                                                                   "n_eff"=>1,
-                                                                   "stage_ready"=>false))
+        nc=NetworkConnector(copy(neighbors),
+                            Dict{String, Any}(
+                                "lc"=>nothing,
+                                "ln"=>nothing,
+                                "lv"=>0,
+                                "cvc"=>0,
+                                "prior"=>nothing,
+                                "innov"=>nothing,
+                                "stage"=>:prior,
+                                "seq"=>0,
+                                "cache"=>Dict{Tuple{Symbol, Int}, Dict{String, ConsensusMessage}}(), # "cache"=>Dict{String, Any}(),
+                                "msg_out"=>nothing,
+                                "complete"=>false,
+                                "n_eff"=>1,
+                                "participants"=>Set([id]),
+                            ))
         return SCRIBEAgent(id, ag.params, ag.bhv, [ag.estimates[1].observations.X], ag, nc, kf_estimators)
     end
 end
 
+"""Simulation convenience constructor that exposes only one adjacency list."""
+initialize_agent(id::String, kf_estimators::KFEstimators,
+                 net_graph::NetworkGraph) =
+    initialize_agent(id, kf_estimators, net_graph.edges[id])
+
 """Compatibility constructor for an isolated agent."""
 function initialize_agent(kf_estimators::KFEstimators)
     agent_id = "agent1"
-    net_graph = init_network_graph(Dict(agent_id => String[]))
-    agent = initialize_agent(agent_id, kf_estimators, net_graph)
-    net_graph.vertices[agent_id] = agent
-    agent
+    initialize_agent(agent_id, kf_estimators, String[])
 end
 
 include("consensus.jl")
